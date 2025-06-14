@@ -1,5 +1,9 @@
 # yt-dlp API 服务
 
+> **快速开始：** `docker run -p 8000:8000 hipc/yt-dlp` 立即开始使用！
+
+[English](README.md) | [中文](README_CN.md)
+
 这是一个基于 FastAPI 和 yt-dlp 构建的 RESTful API 服务，提供视频信息获取和下载功能。
 
 ## 功能特点
