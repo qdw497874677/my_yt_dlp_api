@@ -1,7 +1,9 @@
 import yt_dlp
 import os
 import uuid
+
 import asyncio
+
 import json
 import datetime
 import sqlite3
@@ -12,16 +14,58 @@ import uvicorn
 from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor
 
-def NormalizeString(s: str) -> str:
+def NormalizeString(s: str, max_length: int = 200) -> str:
     """
-    去掉头尾的空格， 所有特殊字符转换成 _
+    去掉头尾的空格， 所有特殊字符转换成 _，并限制长度
     """
     s = s.strip()
     # 替换特殊字符
     special_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
     for char in special_chars:
         s = s.replace(char, '_')
+    
+    # 限制长度，如果超长则截断并保持可读性
+    if len(s) > max_length:
+        # 保留前面的内容，并在末尾添加省略标记
+        s = s[:max_length-3] + "..."
+    
     return s
+
+def create_safe_filename(title: str, format_str: str, ext: str, max_length: int = 200) -> str:
+    """
+    创建安全的文件名，确保不超过指定长度
+    
+    Args:
+        title (str): 视频标题
+        format_str (str): 格式字符串
+        ext (str): 文件扩展名
+        max_length (int): 最大文件名长度
+        
+    Returns:
+        str: 安全的文件名
+    """
+    # 标准化格式字符串和扩展名
+    safe_format = NormalizeString(format_str, 50)  # 格式前缀限制50字符
+    safe_ext = ext.lower()
+    
+    # 计算标题可用的最大长度
+    # 预留空间给格式前缀、分隔符和扩展名
+    reserved_length = len(safe_format) + len(safe_ext) + 2  # 2个字符用于连接符
+    available_title_length = max_length - reserved_length
+    
+    # 确保至少有20个字符用于标题
+    if available_title_length < 20:
+        available_title_length = 20
+        safe_format = safe_format[:10]  # 缩短格式前缀
+    
+    # 标准化并截断标题
+    safe_title = NormalizeString(title, available_title_length)
+    
+    # 构建最终文件名
+    if safe_format:
+        return f"{safe_format}-{safe_title}.{safe_ext}"
+    else:
+        return f"{safe_title}.{safe_ext}"
 
 class Task(BaseModel):
     id: str
@@ -180,13 +224,43 @@ def download_video(url: str, output_path: str = "./downloads", format: str = "be
     os.makedirs(output_path, exist_ok=True)
     
     # Configure yt-dlp options
+    # 使用自定义函数生成安全的文件名模板
+    def get_safe_outtmpl(info_dict):
+        """为每个视频生成安全的输出文件名"""
+        title = info_dict.get('title', 'video')
+        ext = info_dict.get('ext', 'mp4')
+        safe_filename = create_safe_filename(title, format, ext)
+        return os.path.join(output_path, safe_filename)
+    
     ydl_opts = {
-        'outtmpl': os.path.join(output_path, NormalizeString(format) + '-%(title)s.%(ext)s'),
+        'outtmpl': os.path.join(output_path, '%(title).180s.%(ext)s'),
         'quiet': quiet,
         'no_warnings': quiet,
         'format': format,
         'no_abort_on_error': True,
+        # 添加进度钩子来处理文件名
+        'progress_hooks': [],
     }
+    
+    # 如果需要更安全的处理，我们可以在下载前先获取信息
+    temp_ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+    }
+    
+    try:
+        # 先获取视频信息来生成安全的文件名
+        with yt_dlp.YoutubeDL(temp_ydl_opts) as temp_ydl:
+            info = temp_ydl.extract_info(url, download=False)
+            if info:
+                title = info.get('title', 'video')
+                ext = info.get('ext', 'mp4')
+                safe_filename = create_safe_filename(title, format, ext)
+                ydl_opts['outtmpl'] = os.path.join(output_path, safe_filename)
+    except Exception:
+        # 如果获取信息失败，使用默认的安全模板
+        pass
     
     # Download the video
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
