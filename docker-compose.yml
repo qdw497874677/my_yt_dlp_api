@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  yt-dlp-api:
+    build: .
+    ports:
+      - "18000:8000"
+    volumes:
+      - ./downloads:/app/downloads
+      - ./tasks.db:/app/tasks.db
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
