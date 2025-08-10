@@ -195,6 +195,29 @@ docker build -t yt-dlp-api .
 docker run -p 8000:8000 -v $(pwd)/downloads:/app/downloads yt-dlp-api
 ```
 
+### Docker Compose
+
+Alternatively, you can use Docker Compose to run the service. A `docker-compose.yml` file is provided with the necessary configuration:
+
+```bash
+# Start the service
+docker-compose up
+
+# Start the service in detached mode
+docker-compose up -d
+
+docker-compose --file docker-compose-pull.yml up -d
+
+# Stop the service
+docker-compose down
+```
+
+The Docker Compose configuration includes:
+- Port mapping (8000:8000)
+- Volume mounts for downloads and task database persistence
+- Environment variables for proper Python output
+- Restart policy for automatic recovery
+
 ## Important Notes
 
 1. Ensure sufficient disk space for storing downloaded videos

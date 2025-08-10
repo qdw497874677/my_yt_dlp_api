@@ -195,6 +195,27 @@ docker build -t yt-dlp-api .
 docker run -p 8000:8000 -v $(pwd)/downloads:/app/downloads yt-dlp-api
 ```
 
+### Docker Compose
+
+此外，您也可以使用 Docker Compose 来运行服务。项目提供了 `docker-compose.yml` 文件，其中包含必要的配置：
+
+```bash
+# 启动服务
+docker-compose up
+
+# 以分离模式启动服务
+docker-compose up -d
+
+# 停止服务
+docker-compose down
+```
+
+Docker Compose 配置包括：
+- 端口映射 (8000:8000)
+- 下载目录和任务数据库的卷挂载以实现持久化
+- 环境变量以确保正确的 Python 输出
+- 重启策略以实现自动恢复
+
 ## 注意事项
 
 1. 请确保有足够的磁盘空间存储下载的视频
