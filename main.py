@@ -79,7 +79,9 @@ class Task(BaseModel):
 class State:
     def __init__(self):
         self.tasks: Dict[str, Task] = {}
-        self.db_file = "tasks.db"
+        # 确保data目录存在
+        os.makedirs("data", exist_ok=True)
+        self.db_file = "data/tasks.db"
         # 初始化数据库
         self._init_db()
         # 从数据库加载任务状态

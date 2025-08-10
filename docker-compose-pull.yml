@@ -7,7 +7,7 @@ services:
       - "18000:8000"
     volumes:
       - ./downloads:/app/downloads
-      - ./tasks.db:/app/tasks.db
+      - ./data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
