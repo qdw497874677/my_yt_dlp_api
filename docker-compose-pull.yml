@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   yt-dlp-api:
-    build: qdw497874677/my_yt_dlp_api:latest
+    image: qdw497874677/my_yt_dlp_api:latest
     ports:
       - "18000:8000"
     volumes:
