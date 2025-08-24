@@ -10,7 +10,7 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 if API_BASE_URL == "http://localhost:8000" and os.getenv("DOCKER_ENV"):
     API_BASE_URL = "http://yt-dlp-api:8000"
 
-def download_video(url, format_choice, output_path="./downloads"):
+def download_video(url, format_choice, output_path="./downloads", cookies=None):
     """提交下载任务"""
     try:
         # 准备请求数据
@@ -19,6 +19,10 @@ def download_video(url, format_choice, output_path="./downloads"):
             "output_path": output_path,
             "format": format_choice
         }
+        
+        # 添加cookies参数（如果提供）
+        if cookies:
+            payload["cookies"] = cookies
         
         # 发送POST请求到API
         response = requests.post(f"{API_BASE_URL}/download", json=payload)
@@ -62,10 +66,13 @@ def download_video(url, format_choice, output_path="./downloads"):
     except Exception as e:
         return f"错误: {str(e)}", None
 
-def get_video_info(url):
+def get_video_info(url, cookies=None):
     """获取视频信息"""
     try:
-        response = requests.get(f"{API_BASE_URL}/info?url={url}")
+        params = {"url": url}
+        if cookies:
+            params["cookies"] = cookies
+        response = requests.get(f"{API_BASE_URL}/info", params=params)
         response.raise_for_status()
         data = response.json()
         
@@ -84,10 +91,13 @@ def get_video_info(url):
     except Exception as e:
         return f"获取视频信息失败: {str(e)}"
 
-def list_formats(url):
+def list_formats(url, cookies=None):
     """列出可用格式"""
     try:
-        response = requests.get(f"{API_BASE_URL}/formats?url={url}")
+        params = {"url": url}
+        if cookies:
+            params["cookies"] = cookies
+        response = requests.get(f"{API_BASE_URL}/formats", params=params)
         response.raise_for_status()
         data = response.json()
         
@@ -122,6 +132,12 @@ with gr.Blocks(title="yt-dlp 视频下载器") as demo:
                 label="下载格式"
             )
         with gr.Row():
+            cookies_input = gr.Textbox(
+                label="Cookies设置", 
+                placeholder="输入cookies文件路径(如: /path/to/cookies.txt) 或浏览器名称(如: chrome, firefox, edge, safari)",
+                value=""
+            )
+        with gr.Row():
             output_path = gr.Textbox(label="输出路径", value="./downloads")
         with gr.Row():
             download_btn = gr.Button("开始下载")
@@ -132,7 +148,7 @@ with gr.Blocks(title="yt-dlp 视频下载器") as demo:
         
         download_btn.click(
             fn=download_video,
-            inputs=[url_input, format_choice, output_path],
+            inputs=[url_input, format_choice, output_path, cookies_input],
             outputs=[status_output, video_output]
         )
     
@@ -140,13 +156,19 @@ with gr.Blocks(title="yt-dlp 视频下载器") as demo:
         with gr.Row():
             info_url = gr.Textbox(label="视频URL", placeholder="请输入视频链接")
         with gr.Row():
+            info_cookies = gr.Textbox(
+                label="Cookies设置", 
+                placeholder="输入cookies文件路径或浏览器名称",
+                value=""
+            )
+        with gr.Row():
             info_btn = gr.Button("获取信息")
         with gr.Row():
             info_output = gr.Textbox(label="视频信息", interactive=False, lines=10)
         
         info_btn.click(
             fn=get_video_info,
-            inputs=[info_url],
+            inputs=[info_url, info_cookies],
             outputs=[info_output]
         )
     
@@ -154,13 +176,19 @@ with gr.Blocks(title="yt-dlp 视频下载器") as demo:
         with gr.Row():
             formats_url = gr.Textbox(label="视频URL", placeholder="请输入视频链接")
         with gr.Row():
+            formats_cookies = gr.Textbox(
+                label="Cookies设置", 
+                placeholder="输入cookies文件路径或浏览器名称",
+                value=""
+            )
+        with gr.Row():
             formats_btn = gr.Button("列出格式")
         with gr.Row():
             formats_output = gr.Textbox(label="可用格式", interactive=False, lines=15)
         
         formats_btn.click(
             fn=list_formats,
-            inputs=[formats_url],
+            inputs=[formats_url, formats_cookies],
             outputs=[formats_output]
         )
 

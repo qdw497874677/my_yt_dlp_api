@@ -1,6 +1,7 @@
 import yt_dlp
 import os
 import uuid
+import shutil
 
 import asyncio
 
@@ -8,7 +9,7 @@ import json
 import datetime
 import sqlite3
 from typing import Dict, Any, Optional, List
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse
 import uvicorn
 from pydantic import BaseModel
@@ -209,7 +210,7 @@ class State:
 # 创建全局状态对象
 state = State()
 
-def download_video(url: str, output_path: str = "./downloads", format: str = "best", quiet: bool = False) -> Dict[str, Any]:
+def download_video(url: str, output_path: str = "./downloads", format: str = "best", quiet: bool = False, cookies: str = None) -> Dict[str, Any]:
     """
     Download a video from the specified URL using yt-dlp.
     
@@ -218,6 +219,7 @@ def download_video(url: str, output_path: str = "./downloads", format: str = "be
         output_path (str): Directory where the video will be saved
         format (str): Video format to download (e.g., "best", "bestvideo+bestaudio", "mp4")
         quiet (bool): If True, suppress output
+        cookies (str): Path to cookies file or browser name for cookies
         
     Returns:
         Dict[str, Any]: Information about the downloaded video
@@ -244,6 +246,15 @@ def download_video(url: str, output_path: str = "./downloads", format: str = "be
         'progress_hooks': [],
     }
     
+    # 添加cookie支持
+    if cookies:
+        if cookies.endswith('.txt'):
+            # 如果是cookies文件路径
+            ydl_opts['cookiefile'] = cookies
+        else:
+            # 如果是浏览器名称
+            ydl_opts['cookiesfrombrowser'] = (cookies,)
+    
     # 如果需要更安全的处理，我们可以在下载前先获取信息
     temp_ydl_opts = {
         'quiet': True,
@@ -269,13 +280,14 @@ def download_video(url: str, output_path: str = "./downloads", format: str = "be
         info = ydl.extract_info(url, download=True)
         return ydl.sanitize_info(info)
 
-def get_video_info(url: str, quiet: bool = False) -> Dict[str, Any]:
+def get_video_info(url: str, quiet: bool = False, cookies: str = None) -> Dict[str, Any]:
     """
     Get information about a video without downloading it.
     
     Args:
         url (str): The URL of the video
         quiet (bool): If True, suppress output
+        cookies (str): Path to cookies file or browser name for cookies
         
     Returns:
         Dict[str, Any]: Information about the video
@@ -286,21 +298,31 @@ def get_video_info(url: str, quiet: bool = False) -> Dict[str, Any]:
         'skip_download': True,
     }
     
+    # 添加cookie支持
+    if cookies:
+        if cookies.endswith('.txt'):
+            # 如果是cookies文件路径
+            ydl_opts['cookiefile'] = cookies
+        else:
+            # 如果是浏览器名称
+            ydl_opts['cookiesfrombrowser'] = (cookies,)
+    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
         return ydl.sanitize_info(info)
 
-def list_available_formats(url: str) -> List[Dict[str, Any]]:
+def list_available_formats(url: str, cookies: str = None) -> List[Dict[str, Any]]:
     """
     List all available formats for a video.
     
     Args:
         url (str): The URL of the video
+        cookies (str): Path to cookies file or browser name for cookies
         
     Returns:
         List[Dict[str, Any]]: List of available formats
     """
-    info = get_video_info(url)
+    info = get_video_info(url, cookies=cookies)
     if not info:
         return []
     
@@ -313,8 +335,9 @@ class DownloadRequest(BaseModel):
     output_path: str = "./downloads"
     format: str = "bestvideo+bestaudio/best"
     quiet: bool = False
+    cookies: str = None
 
-async def process_download_task(task_id: str, url: str, output_path: str, format: str, quiet: bool):
+async def process_download_task(task_id: str, url: str, output_path: str, format: str, quiet: bool, cookies: str = None):
     """Asynchronously process download task"""
     try:
         loop = asyncio.get_event_loop()
@@ -326,6 +349,7 @@ async def process_download_task(task_id: str, url: str, output_path: str, format
                     output_path=output_path,
                     format=format,
                     quiet=quiet,
+                    cookies=cookies,
                 )
             )
         state.update_task(task_id, "completed", result=result)
@@ -349,7 +373,8 @@ async def api_download_video(request: DownloadRequest):
         url=request.url,
         output_path=request.output_path,
         format=request.format,
-        quiet=request.quiet
+        quiet=request.quiet,
+        cookies=request.cookies
     ))
     
     return {"status": "success", "task_id": task_id}
@@ -388,26 +413,117 @@ async def list_all_tasks():
     return {"status": "success", "data": tasks}
 
 @app.get("/info", response_class=JSONResponse)
-async def api_get_video_info(url: str = Query(..., description="The URL of the video")):
+async def api_get_video_info(url: str = Query(..., description="The URL of the video"), cookies: str = Query(None, description="Path to cookies file or browser name")):
     """
     Get information about a video without downloading it.
     """
     try:
-        result = get_video_info(url)
+        result = get_video_info(url, cookies=cookies)
         return {"status": "success", "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/formats", response_class=JSONResponse)
-async def api_list_formats(url: str = Query(..., description="The URL of the video")):
+async def api_list_formats(url: str = Query(..., description="The URL of the video"), cookies: str = Query(None, description="Path to cookies file or browser name")):
     """
     List all available formats for a video.
     """
     try:
-        result = list_available_formats(url)
+        result = list_available_formats(url, cookies=cookies)
         return {"status": "success", "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/upload-cookies")
+async def upload_cookies(file: UploadFile = File(...)):
+    """
+    上传 cookies 文件到服务器
+    """
+    try:
+        # 确保 cookies 目录存在
+        cookies_dir = "cookies"
+        os.makedirs(cookies_dir, exist_ok=True)
+        
+        # 验证文件类型
+        if not file.filename.endswith('.txt'):
+            raise HTTPException(status_code=400, detail="Only .txt files are allowed for cookies")
+        
+        # 保存文件
+        file_path = os.path.join(cookies_dir, "cookies.txt")
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # 设置文件权限为仅当前用户可读写
+        os.chmod(file_path, 0o600)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "message": "Cookies 文件上传成功",
+                "path": file_path,
+                "filename": file.filename,
+                "size": os.path.getsize(file_path)
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"上传失败: {str(e)}")
+
+@app.get("/cookies-status")
+async def get_cookies_status():
+    """
+    检查 cookies 文件状态
+    """
+    cookies_path = "cookies/cookies.txt"
+    if os.path.exists(cookies_path):
+        file_stat = os.stat(cookies_path)
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "exists": True,
+                "path": cookies_path,
+                "size": file_stat.st_size,
+                "modified": datetime.datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
+                "permissions": oct(file_stat.st_mode)[-3:]
+            }
+        )
+    else:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "exists": False,
+                "message": "Cookies 文件不存在"
+            }
+        )
+
+@app.delete("/cookies")
+async def delete_cookies():
+    """
+    删除 cookies 文件
+    """
+    cookies_path = "cookies/cookies.txt"
+    try:
+        if os.path.exists(cookies_path):
+            os.remove(cookies_path)
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "message": "Cookies 文件删除成功"
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "status": "error",
+                    "message": "Cookies 文件不存在"
+                }
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")
 
 @app.get("/download/{task_id}/file", response_class=FileResponse)
 async def download_completed_video(task_id: str):
