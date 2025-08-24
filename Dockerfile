@@ -4,11 +4,14 @@ WORKDIR /app
 COPY . .
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
+    apt-get install -y --no-install-recommends ffmpeg supervisor && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* &&\
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt && \
+    mkdir -p /var/log/supervisor
 
-EXPOSE 8000
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-CMD ["python","main.py"]
+EXPOSE 8000 7860
+
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

@@ -25,17 +25,49 @@ A RESTful API service built with FastAPI and yt-dlp for video information retrie
 
 ## Quick Start
 
+### Option 1: Using Docker (Recommended)
+
+1. Clone and start the services:
+```bash
+git clone <repository-url>
+cd my_yt_dlp_api
+./start.sh
+```
+
+This will start both services:
+- **FastAPI API**: http://localhost:18000
+- **Gradio Web Interface**: http://localhost:17860
+
+### Option 2: Manual Docker Setup
+
+```bash
+# Build and start with Docker Compose
+docker-compose up -d
+
+# Or use pre-built image
+docker-compose -f docker-compose-pull.yml up -d
+```
+
+### Option 3: Local Development
+
 1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Start the server:
+2. Start FastAPI server:
 ```bash
 python main.py
 ```
 
-The server will start at http://localhost:8000
+3. In another terminal, start Gradio interface:
+```bash
+python gradio_app.py
+```
+
+Services:
+- **FastAPI API**: http://localhost:8000
+- **Gradio Web Interface**: http://localhost:7860
 
 ## API Documentation
 
@@ -218,8 +250,45 @@ The Docker Compose configuration includes:
 - Environment variables for proper Python output
 - Restart policy for automatic recovery
 
+## Web Interface
+
+The project includes a user-friendly Gradio web interface that provides easy access to all API features:
+
+### Features
+- **Video Download**: Submit download tasks with format selection
+- **Video Information**: View video metadata (title, duration, uploader)
+- **Format Selection**: Browse and select from available video formats
+- **Real-time Status**: Monitor download progress with live updates
+
+### Access
+- **Docker**: http://localhost:17860
+- **Local Development**: http://localhost:7860
+
+### Usage
+1. Open the web interface in your browser
+2. Navigate between tabs for different functions
+3. Enter video URLs and select desired formats
+4. Monitor download progress in real-time
+5. Download completed videos directly through the interface
+
+## Architecture Overview
+
+### Service Components
+- **FastAPI Service** (Port 8000/18000): RESTful API backend
+- **Gradio Service** (Port 7860/17860): Web frontend interface
+- **Supervisor**: Process manager for both services
+- **SQLite Database**: Persistent task storage
+- **File Storage**: Downloaded video files
+
+### Service Communication
+- Gradio interface communicates with FastAPI via HTTP requests
+- Both services share the same SQLite database and file storage
+- Supervisor ensures both services run simultaneously and auto-restart on failure
+
 ## Important Notes
 
 1. Ensure sufficient disk space for storing downloaded videos
 2. Configure appropriate security measures in production environment
 3. Comply with video platform terms of service and copyright regulations
+4. Both services are designed to work together in the same container
+5. Web interface automatically detects container environment and adjusts API endpoints

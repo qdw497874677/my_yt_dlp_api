@@ -5,9 +5,12 @@ services:
     image: qdw497874677/my_yt_dlp_api:latest
     ports:
       - "18000:8000"
+      - "17860:7860"
     volumes:
       - ./downloads:/app/downloads
       - ./data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
+      - API_BASE_URL=http://localhost:8000
+      - DOCKER_ENV=true
     restart: unless-stopped
