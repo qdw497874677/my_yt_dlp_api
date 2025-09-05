@@ -102,6 +102,8 @@ docker run -p 8000:8000 -v $(pwd)/downloads:/app/downloads yt-dlp-api
 - GET /cookies-status - Check cookies status
 - DELETE /cookies - Delete cookies file
 - GET /download/{task_id}/file - Download completed video file
+- DELETE /task/{task_id} - Delete a specific task and its associated file
+- DELETE /tasks - Delete all tasks and their associated files
 
 ## Development Notes
 
@@ -133,6 +135,12 @@ curl -X GET "http://localhost:8000/info?url=https://www.youtube.com/watch?v=VIDE
 
 # List available formats
 curl -X GET "http://localhost:8000/formats?url=https://www.youtube.com/watch?v=VIDEO_ID"
+
+# Delete a specific task
+curl -X DELETE "http://localhost:8000/task/{task_id}"
+
+# Delete all tasks
+curl -X DELETE "http://localhost:8000/tasks"
 ```
 
 ## Project Structure

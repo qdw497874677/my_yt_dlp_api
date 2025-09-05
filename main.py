@@ -218,9 +218,67 @@ class State:
     
     def list_tasks(self) -> List[Task]:
         return list(self.tasks.values())
+    
+    def delete_task(self, task_id: str) -> bool:
+        """删除任务"""
+        if task_id in self.tasks:
+            # 从内存中删除任务
+            del self.tasks[task_id]
+            
+            # 从数据库中删除任务
+            try:
+                conn = sqlite3.connect(self.db_file)
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+                conn.commit()
+                conn.close()
+                return True
+            except Exception as e:
+                print(f"Error deleting task from database: {e}")
+                return False
+        return False
 
 # 创建全局状态对象
 state = State()
+
+def delete_task_file(task: Task) -> bool:
+    """
+    删除任务对应的文件
+    
+    Args:
+        task (Task): 任务对象
+        
+    Returns:
+        bool: 删除成功返回True，否则返回False
+    """
+    if not task or task.status != "completed" or not task.result:
+        return False
+    
+    try:
+        # 从结果中提取文件名
+        filename = task.result.get("requested_downloads", [{}])[0].get("filename")
+        if not filename:
+            requested_filename = task.result.get("requested_filename")
+            if requested_filename:
+                filename = requested_filename
+            else:
+                # 尝试构建可能的文件路径
+                title = task.result.get("title", "video")
+                ext = task.result.get("ext", "mp4")
+                filename = os.path.join(task.output_path, f"{title}.{ext}")
+        
+        # 检查文件是否存在并删除
+        if filename and os.path.exists(filename):
+            os.remove(filename)
+            logger.info(f"已删除任务文件: {filename}")
+            return True
+        else:
+            logger.warning(f"任务文件不存在: {filename}")
+            return False
+    except Exception as e:
+        logger.error(f"删除任务文件失败: {e}")
+        return False
+
 
 def download_video(url: str, output_path: str = "./downloads", format: str = "best", quiet: bool = False, cookies: str = None) -> Dict[str, Any]:
     """
@@ -612,6 +670,77 @@ async def download_completed_video(task_id: str):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error accessing video file: {str(e)}")
+
+
+@app.delete("/task/{task_id}", response_class=JSONResponse)
+async def delete_task(task_id: str):
+    """
+    删除指定的任务及其对应的文件（如果存在）
+    """
+    # 获取任务信息
+    task = state.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task with ID {task_id} not found")
+    
+    # 如果任务已完成，尝试删除对应的文件
+    file_deleted = False
+    if task.status == "completed" and task.result:
+        file_deleted = delete_task_file(task)
+    
+    # 从数据库和内存中删除任务
+    deleted = state.delete_task(task_id)
+    
+    if deleted:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "message": f"Task {task_id} deleted successfully",
+                "file_deleted": file_deleted
+            }
+        )
+    else:
+        raise HTTPException(status_code=500, detail="Failed to delete task")
+
+
+@app.delete("/tasks", response_class=JSONResponse)
+async def delete_all_tasks():
+    """
+    删除所有任务及其对应的文件（如果存在）
+    """
+    deleted_tasks = []
+    failed_tasks = []
+    
+    # 获取所有任务的副本，避免在迭代时修改字典
+    tasks_copy = list(state.tasks.values())
+    
+    for task in tasks_copy:
+        # 如果任务已完成，尝试删除对应的文件
+        file_deleted = False
+        if task.status == "completed" and task.result:
+            file_deleted = delete_task_file(task)
+        
+        # 从数据库和内存中删除任务
+        deleted = state.delete_task(task.id)
+        
+        if deleted:
+            deleted_tasks.append({
+                "task_id": task.id,
+                "file_deleted": file_deleted
+            })
+        else:
+            failed_tasks.append(task.id)
+    
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "success",
+            "message": f"Deleted {len(deleted_tasks)} tasks, failed to delete {len(failed_tasks)} tasks",
+            "deleted_tasks": deleted_tasks,
+            "failed_tasks": failed_tasks
+        }
+    )
+
 
 def start_api():
     uvicorn.run(app, host="0.0.0.0", port=8000)
