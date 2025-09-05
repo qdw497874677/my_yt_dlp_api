@@ -6,23 +6,26 @@ ENV DOCKER_ENV=true
 
 WORKDIR /app
 
-# 复制requirements.txt并安装依赖
-COPY requirements.txt .
+# 安装系统依赖
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg supervisor && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        supervisor && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    pip install --no-cache-dir -r requirements.txt && \
-    mkdir -p /var/log/supervisor
+    rm -rf /var/lib/apt/lists/*
+
+# 复制requirements.txt并安装Python依赖
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 创建必要的目录
+RUN mkdir -p /var/log/supervisor /app/downloads /app/data /app/cookies
 
 # 复制应用代码
 COPY . .
 
 # 复制supervisor配置
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-
-# 创建必要的目录
-RUN mkdir -p /app/downloads /app/data /app/cookies
 
 # 设置权限
 RUN chmod +x /app/start.sh
