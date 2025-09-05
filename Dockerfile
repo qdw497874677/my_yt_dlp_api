@@ -1,4 +1,4 @@
-FROM python:3.10
+FROM python:3.9
 
 # 设置环境变量
 ENV PYTHONUNBUFFERED=1
