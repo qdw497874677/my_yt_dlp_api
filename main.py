@@ -2,6 +2,7 @@ import yt_dlp
 import os
 import uuid
 import shutil
+import logging
 
 import asyncio
 
@@ -14,6 +15,13 @@ from fastapi.responses import JSONResponse, FileResponse
 import uvicorn
 from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 def NormalizeString(s: str, max_length: int = 200) -> str:
     """
@@ -102,8 +110,9 @@ class State:
             format TEXT NOT NULL,
             status TEXT NOT NULL,
             result TEXT,
-            error TEXT,
-            timestamp TEXT NOT NULL
+            error_json TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         )
         ''')
         
@@ -116,7 +125,7 @@ class State:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
             
-            cursor.execute("SELECT id, url, output_path, format, status, result, error FROM tasks")
+            cursor.execute("SELECT id, url, output_path, format, status, result, error_json FROM tasks")
             rows = cursor.fetchall()
             
             for row in rows:
@@ -124,6 +133,7 @@ class State:
                 
                 # 解析JSON结果（如果有）
                 result = json.loads(result_json) if result_json else None
+                error = json.loads(error) if error else None
                 
                 # 创建Task对象并存储在内存中
                 task = Task(
@@ -152,11 +162,12 @@ class State:
             
             timestamp = datetime.datetime.now().isoformat()
             result_json = json.dumps(task.result) if task.result else None
+            error_json = json.dumps(task.error) if task.error else None
             
             # 使用REPLACE策略插入/更新任务
             cursor.execute('''
-            INSERT OR REPLACE INTO tasks (id, url, output_path, format, status, result, error, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO tasks (id, url, output_path, format, status, result, error_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 task.id,
                 task.url,
@@ -164,7 +175,8 @@ class State:
                 task.format,
                 task.status,
                 result_json,
-                task.error,
+                error_json,
+                timestamp,
                 timestamp
             ))
             
@@ -224,18 +236,22 @@ def download_video(url: str, output_path: str = "./downloads", format: str = "be
     Returns:
         Dict[str, Any]: Information about the downloaded video
     """
+    logger.info(f"开始下载视频: {url}")
+    
+    # 进度钩子函数
+    def progress_hook(d):
+        if d['status'] == 'downloading':
+            percent = d.get('_percent_str', 'N/A')
+            speed = d.get('_speed_str', 'N/A')
+            eta = d.get('_eta_str', 'N/A')
+            logger.info(f"下载进度: {percent} 速度: {speed} 剩余时间: {eta}")
+        elif d['status'] == 'finished':
+            logger.info("下载完成，正在处理文件...")
+    
     # Create output directory if it doesn't exist
     os.makedirs(output_path, exist_ok=True)
     
     # Configure yt-dlp options
-    # 使用自定义函数生成安全的文件名模板
-    def get_safe_outtmpl(info_dict):
-        """为每个视频生成安全的输出文件名"""
-        title = info_dict.get('title', 'video')
-        ext = info_dict.get('ext', 'mp4')
-        safe_filename = create_safe_filename(title, format, ext)
-        return os.path.join(output_path, safe_filename)
-    
     ydl_opts = {
         'outtmpl': os.path.join(output_path, '%(title).180s.%(ext)s'),
         'quiet': quiet,
@@ -243,8 +259,24 @@ def download_video(url: str, output_path: str = "./downloads", format: str = "be
         'format': format,
         'no_abort_on_error': True,
         # 添加进度钩子来处理文件名
-        'progress_hooks': [],
+        'progress_hooks': [progress_hook],
     }
+    
+    # 如果需要更安全的处理，我们可以在下载前先获取信息
+    temp_ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+    }
+    
+    # 添加cookie支持到temp_ydl_opts
+    if cookies:
+        if cookies.endswith('.txt'):
+            # 如果是cookies文件路径
+            temp_ydl_opts['cookiefile'] = cookies
+        else:
+            # 如果是浏览器名称
+            temp_ydl_opts['cookiesfrombrowser'] = (cookies,)
     
     # 添加cookie支持
     if cookies:
@@ -255,13 +287,6 @@ def download_video(url: str, output_path: str = "./downloads", format: str = "be
             # 如果是浏览器名称
             ydl_opts['cookiesfrombrowser'] = (cookies,)
     
-    # 如果需要更安全的处理，我们可以在下载前先获取信息
-    temp_ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'skip_download': True,
-    }
-    
     try:
         # 先获取视频信息来生成安全的文件名
         with yt_dlp.YoutubeDL(temp_ydl_opts) as temp_ydl:
@@ -271,14 +296,22 @@ def download_video(url: str, output_path: str = "./downloads", format: str = "be
                 ext = info.get('ext', 'mp4')
                 safe_filename = create_safe_filename(title, format, ext)
                 ydl_opts['outtmpl'] = os.path.join(output_path, safe_filename)
-    except Exception:
+                logger.info(f"使用安全文件名: {safe_filename}")
+    except Exception as e:
+        logger.warning(f"获取视频信息失败，使用默认模板: {e}")
         # 如果获取信息失败，使用默认的安全模板
         pass
     
     # Download the video
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        return ydl.sanitize_info(info)
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            result = ydl.sanitize_info(info)
+            logger.info("视频下载完成")
+            return result
+    except Exception as e:
+        logger.error(f"下载失败: {e}")
+        raise
 
 def get_video_info(url: str, quiet: bool = False, cookies: str = None) -> Dict[str, Any]:
     """
@@ -340,6 +373,7 @@ class DownloadRequest(BaseModel):
 async def process_download_task(task_id: str, url: str, output_path: str, format: str, quiet: bool, cookies: str = None):
     """Asynchronously process download task"""
     try:
+        print(f"Starting download task {task_id} for URL: {url}")
         loop = asyncio.get_event_loop()
         with ThreadPoolExecutor() as executor:
             result = await loop.run_in_executor(
@@ -352,8 +386,10 @@ async def process_download_task(task_id: str, url: str, output_path: str, format
                     cookies=cookies,
                 )
             )
+        print(f"Download task {task_id} completed successfully")
         state.update_task(task_id, "completed", result=result)
     except Exception as e:
+        print(f"Download task {task_id} failed with error: {str(e)}")
         state.update_task(task_id, "failed", error=str(e))
 
 @app.post("/download", response_class=JSONResponse)
@@ -361,13 +397,17 @@ async def api_download_video(request: DownloadRequest):
     """
     Submit a video download task and return a task ID to track progress.
     """
+    print(f"Received download request for URL: {request.url}")
     # 如果有相同的url和output_path的任务已经存在，直接返回该任务
     existing_task = next((task for task in state.tasks.values() if task.format == request.format and task.url == request.url and task.output_path == request.output_path), None)
     if existing_task:
+        print(f"Found existing task with ID: {existing_task.id}")
         return {"status": "success", "task_id": existing_task.id}
     task_id = state.add_task(request.url, request.output_path, request.format)
+    print(f"Created new task with ID: {task_id}")
     
     # Asynchronously execute download task
+    print("Creating async task for download")
     asyncio.create_task(process_download_task(
         task_id=task_id,
         url=request.url,
@@ -376,6 +416,7 @@ async def api_download_video(request: DownloadRequest):
         quiet=request.quiet,
         cookies=request.cookies
     ))
+    print("Async task created")
     
     return {"status": "success", "task_id": task_id}
 

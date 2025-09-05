@@ -1,69 +1,76 @@
 # yt-dlp API Service
 
-> **Quick Start:** `docker run -p 8000:8000 hipc/yt-dlp` to get started instantly!
+> **Quick Start:** `docker run -p 18000:8000 -p 17860:7860 qdw497874677/my_yt_dlp_api:latest` to get started instantly!
 
 [English](README.md) | [中文](README_CN.md)
 
-A RESTful API service built with FastAPI and yt-dlp for video information retrieval and downloading.
+A RESTful API service built with FastAPI and yt-dlp for video information retrieval and downloading. This service provides both a powerful API and an easy-to-use web interface for downloading videos from YouTube and other platforms.
 
 ## Features
 
-- Asynchronous download processing
-- Multiple video format support
-- Persistent task status storage
-- Detailed video information queries
-- RESTful API design
-- Cookie authentication support for YouTube bot detection
-- Cookie file management via API
+- 🚀 **Asynchronous Processing**: Download tasks run in the background without blocking the API
+- 📹 **Multiple Format Support**: Download videos in various formats and qualities
+- 💾 **Persistent Storage**: Task status and history stored in SQLite database
+- 📋 **Detailed Information**: Get comprehensive video metadata before downloading
+- 🔌 **RESTful API**: Clean and intuitive API endpoints
+- 🍪 **Cookie Authentication**: Bypass YouTube bot detection with cookie support
+- 🌐 **Web Interface**: User-friendly Gradio interface for easy operation
+- 🐳 **Docker Support**: Easy deployment with Docker and Docker Compose
+- 📂 **Safe Filename Handling**: Automatic sanitization of filenames to prevent issues
 
 ## Requirements
 
-- Python 3.7+
-- FastAPI
-- yt-dlp
-- uvicorn
-- pydantic
-- sqlite3
+- Docker (recommended) OR Python 3.7+
+- ffmpeg (for video processing)
+- Internet connection
 
 ## Quick Start
 
-### Option 1: Using Docker (Recommended)
+### Option 1: Using Pre-built Docker Image (Easiest)
 
-1. Clone and start the services:
 ```bash
+# Run the service with one command
+docker run -d \
+  --name yt-dlp-api \
+  -p 18000:8000 \
+  -p 17860:7860 \
+  -v $(pwd)/downloads:/app/downloads \
+  -v $(pwd)/data:/app/data \
+  qdw497874677/my_yt_dlp_api:latest
+
+# Access the services:
+# FastAPI API: http://localhost:18000
+# Gradio Web Interface: http://localhost:17860
+```
+
+### Option 2: Using Docker Compose (Recommended for Development)
+
+```bash
+# Clone the repository
 git clone <repository-url>
 cd my_yt_dlp_api
+
+# Start services with the provided script
 ./start.sh
+
+# Or start manually:
+# docker-compose up -d
 ```
 
 This will start both services:
 - **FastAPI API**: http://localhost:18000
 - **Gradio Web Interface**: http://localhost:17860
 
-### Option 2: Manual Docker Setup
-
-```bash
-# Build and start with Docker Compose
-docker-compose up -d
-
-# Or use pre-built image
-docker-compose -f docker-compose-pull.yml up -d
-```
-
 ### Option 3: Local Development
 
-1. Install dependencies:
 ```bash
+# Install dependencies
 pip install -r requirements.txt
-```
 
-2. Start FastAPI server:
-```bash
+# Start FastAPI server
 python main.py
-```
 
-3. In another terminal, start Gradio interface:
-```bash
+# In another terminal, start Gradio interface
 python gradio_app.py
 ```
 

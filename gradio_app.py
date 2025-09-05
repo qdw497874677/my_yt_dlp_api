@@ -3,6 +3,14 @@ import requests
 import os
 import time
 import json
+import logging
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # API配置
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
@@ -10,8 +18,12 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 if API_BASE_URL == "http://localhost:8000" and os.getenv("DOCKER_ENV"):
     API_BASE_URL = "http://yt-dlp-api:8000"
 
+# 设置环境变量以避免Gradio的API文档错误
+os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
+
 def download_video(url, format_choice, output_path="./downloads", cookies=None):
     """提交下载任务"""
+    logger.info(f"开始下载视频: {url}")
     try:
         # 准备请求数据
         payload = {
@@ -25,6 +37,7 @@ def download_video(url, format_choice, output_path="./downloads", cookies=None):
             payload["cookies"] = cookies
         
         # 发送POST请求到API
+        logger.info(f"发送下载请求到: {API_BASE_URL}/download")
         response = requests.post(f"{API_BASE_URL}/download", json=payload)
         response.raise_for_status()
         
@@ -33,41 +46,73 @@ def download_video(url, format_choice, output_path="./downloads", cookies=None):
         task_id = result.get("task_id")
         
         if not task_id:
-            return "错误：无法获取任务ID", None
+            error_msg = "错误：无法获取任务ID"
+            logger.error(error_msg)
+            return error_msg, None
+        
+        logger.info(f"任务ID: {task_id}")
         
         # 轮询任务状态直到完成
         status_output = ""
-        while True:
+        max_attempts = 30  # 最多尝试30次（约1分钟）
+        attempt = 0
+        
+        while attempt < max_attempts:
             status_response = requests.get(f"{API_BASE_URL}/task/{task_id}")
             status_response.raise_for_status()
             status_data = status_response.json()
             
             task_status = status_data.get("data", {}).get("status", "unknown")
             status_output += f"任务状态: {task_status}\n"
+            logger.info(f"任务 {task_id} 状态: {task_status}")
             
             if task_status == "completed":
                 # 获取下载文件
+                logger.info(f"下载完成，获取文件: {API_BASE_URL}/download/{task_id}/file")
                 file_response = requests.get(f"{API_BASE_URL}/download/{task_id}/file")
                 if file_response.status_code == 200:
                     # 保存文件
                     filename = f"downloaded_video_{task_id}.mp4"
                     with open(filename, "wb") as f:
                         f.write(file_response.content)
-                    return status_output + "下载完成！", filename
+                    success_msg = status_output + "下载完成！"
+                    logger.info(success_msg)
+                    return success_msg, filename
                 else:
-                    return status_output + "错误：无法下载文件", None
+                    error_msg = status_output + f"错误：无法下载文件 (状态码: {file_response.status_code})"
+                    logger.error(error_msg)
+                    return error_msg, None
             elif task_status == "failed":
                 error = status_data.get("data", {}).get("error", "未知错误")
-                return status_output + f"下载失败: {error}", None
+                error_msg = status_output + f"下载失败: {error}"
+                logger.error(error_msg)
+                return error_msg, None
             
             # 等待一段时间后再次检查
             time.sleep(2)
+            attempt += 1
+        
+        # 超时处理
+        timeout_msg = status_output + "下载超时，请稍后查看任务状态"
+        logger.warning(timeout_msg)
+        return timeout_msg, None
             
+    except requests.exceptions.ConnectionError as e:
+        error_msg = f"连接错误: 无法连接到API服务，请检查服务是否运行"
+        logger.error(error_msg)
+        return error_msg, None
+    except requests.exceptions.Timeout as e:
+        error_msg = f"请求超时: {str(e)}"
+        logger.error(error_msg)
+        return error_msg, None
     except Exception as e:
-        return f"错误: {str(e)}", None
+        error_msg = f"错误: {str(e)}"
+        logger.error(error_msg)
+        return error_msg, None
 
 def get_video_info(url, cookies=None):
     """获取视频信息"""
+    logger.info(f"获取视频信息: {url}")
     try:
         params = {"url": url}
         if cookies:
@@ -87,12 +132,21 @@ def get_video_info(url, cookies=None):
             seconds = int(duration % 60)
             duration = f"{minutes}分{seconds}秒"
         
-        return f"标题: {title}\n时长: {duration}\n上传者: {uploader}"
+        result = f"标题: {title}\n时长: {duration}\n上传者: {uploader}"
+        logger.info(f"获取视频信息成功: {title}")
+        return result
+    except requests.exceptions.ConnectionError as e:
+        error_msg = "连接错误: 无法连接到API服务，请检查服务是否运行"
+        logger.error(error_msg)
+        return error_msg
     except Exception as e:
-        return f"获取视频信息失败: {str(e)}"
+        error_msg = f"获取视频信息失败: {str(e)}"
+        logger.error(error_msg)
+        return error_msg
 
 def list_formats(url, cookies=None):
     """列出可用格式"""
+    logger.info(f"获取视频格式列表: {url}")
     try:
         params = {"url": url}
         if cookies:
@@ -113,9 +167,17 @@ def list_formats(url, cookies=None):
             else:
                 format_list.append(f"{format_id}: {resolution} ({ext})")
         
-        return "\n".join(format_list) if format_list else "未找到可用格式"
+        result = "\n".join(format_list) if format_list else "未找到可用格式"
+        logger.info(f"获取到 {len(format_list)} 个格式")
+        return result
+    except requests.exceptions.ConnectionError as e:
+        error_msg = "连接错误: 无法连接到API服务，请检查服务是否运行"
+        logger.error(error_msg)
+        return error_msg
     except Exception as e:
-        return f"获取格式列表失败: {str(e)}"
+        error_msg = f"获取格式列表失败: {str(e)}"
+        logger.error(error_msg)
+        return error_msg
 
 # Gradio界面
 with gr.Blocks(title="yt-dlp 视频下载器") as demo:

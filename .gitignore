@@ -1,5 +1,54 @@
-venv/
-downloads/
-.DS_Store
-tasks.db
+# Byte-compiled / optimized / DLL files
 __pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/*.part
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.venv/
+venv/
+ENV/
+
+# Data
+data/*.db-journal
+*.db-shm
+*.db-wal
+
+# Temporary files
+*.tmp
+*.temp
+
+# Test coverage
+.coverage
+htmlcov/
+
+# Local configuration
+cookies/*.txt
