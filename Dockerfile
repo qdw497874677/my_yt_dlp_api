@@ -10,9 +10,13 @@ WORKDIR /app
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
-        supervisor && \
+        supervisor \
+        apt-utils && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# 升级pip
+RUN pip install --upgrade pip
 
 # 复制requirements.txt并安装Python依赖
 COPY requirements.txt .
