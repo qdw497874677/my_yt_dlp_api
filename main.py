@@ -456,11 +456,34 @@ async def api_download_video(request: DownloadRequest):
     Submit a video download task and return a task ID to track progress.
     """
     print(f"Received download request for URL: {request.url}")
-    # 如果有相同的url和output_path的任务已经存在，直接返回该任务
+    # 如果有相同的url和output_path的任务已经存在，检查任务状态
     existing_task = next((task for task in state.tasks.values() if task.format == request.format and task.url == request.url and task.output_path == request.output_path), None)
     if existing_task:
         print(f"Found existing task with ID: {existing_task.id}")
-        return {"status": "success", "task_id": existing_task.id}
+        # 如果任务失败了，创建新任务而不是返回旧的ID
+        if existing_task.status == "failed":
+            print(f"Existing task failed, creating new task")
+            task_id = state.add_task(request.url, request.output_path, request.format)
+            print(f"Created new task with ID: {task_id}")
+            
+            # Asynchronously execute download task
+            print("Creating async task for download")
+            asyncio.create_task(process_download_task(
+                task_id=task_id,
+                url=request.url,
+                output_path=request.output_path,
+                format=request.format,
+                quiet=request.quiet,
+                cookies=request.cookies
+            ))
+            print("Async task created")
+            
+            return {"status": "success", "task_id": task_id}
+        else:
+            # 对于非失败状态的任务，返回现有任务ID
+            return {"status": "success", "task_id": existing_task.id}
+    
+    # 创建新任务
     task_id = state.add_task(request.url, request.output_path, request.format)
     print(f"Created new task with ID: {task_id}")
     
@@ -743,8 +766,19 @@ async def delete_all_tasks():
 
 
 def start_api():
+    logger.info("Starting FastAPI server on 0.0.0.0:8000")
+    logger.info("API documentation will be available at http://0.0.0.0:8000/docs")
+    logger.info("API routes:")
+    for route in app.routes:
+        if hasattr(route, "methods"):
+            logger.info(f"  {list(route.methods)[0]} {route.path}")
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
     print("Starting yt-dlp API server...")
+    logger.info("yt-dlp API server starting...")
+    logger.info("Server configuration:")
+    logger.info("  Host: 0.0.0.0")
+    logger.info("  Port: 8000")
+    logger.info("  PID: %s", os.getpid())
     start_api()
