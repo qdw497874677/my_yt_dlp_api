@@ -201,6 +201,7 @@ docker run -p 8000:8000 -v $(pwd)/downloads:/app/downloads yt-dlp-api-service
 
 ```bash
 # 启动服务
+（重新构建  docker-compose build --no-cache）
 docker-compose up
 
 # 以分离模式启动服务
