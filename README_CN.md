@@ -189,10 +189,10 @@ GET /download/{task_id}/file
 
 ```bash
 # 构建镜像
-docker build -t yt-dlp-api .
+docker build -t yt-dlp-api-service .
 
 # 运行容器
-docker run -p 8000:8000 -v $(pwd)/downloads:/app/downloads yt-dlp-api
+docker run -p 8000:8000 -v $(pwd)/downloads:/app/downloads yt-dlp-api-service
 ```
 
 ### Docker Compose

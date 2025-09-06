@@ -43,10 +43,10 @@ docker-compose -f docker-compose-pull.yml up -d
 
 ```bash
 # Build image
-docker build -t yt-dlp-api .
+docker build -t yt-dlp-api-service .
 
 # Run container
-docker run -p 8000:8000 -v $(pwd)/downloads:/app/downloads yt-dlp-api
+docker run -p 8000:8000 -v $(pwd)/downloads:/app/downloads yt-dlp-api-service
 ```
 
 ## Architecture Overview

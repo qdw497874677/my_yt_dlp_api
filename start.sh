@@ -2,7 +2,7 @@
 
 # 启动脚本 - 同时启动FastAPI和Gradio服务
 
-echo "正在启动 yt-dlp API 服务..."
+echo "正在启动 yt-dlp-api-service..."
 
 # 检查Docker是否安装
 if ! command -v docker &> /dev/null; then

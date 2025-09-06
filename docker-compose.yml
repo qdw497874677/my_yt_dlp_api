@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  yt-dlp-api:
+  yt-dlp-api-service:
     build: .
     ports:
       - "18000:8000"
@@ -11,6 +11,6 @@ services:
       - ./data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
-      - API_BASE_URL=http://yt-dlp-api:8000
+      - API_BASE_URL=http://yt-dlp-api-service:8000
       - DOCKER_ENV=true
     restart: unless-stopped
