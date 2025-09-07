@@ -102,7 +102,7 @@ import requests
 response = requests.post("http://localhost:8000/download", json={
     "url": "VIDEO_URL",
     "format": "best",
-    "cookies": "/path/to/cookies.txt"
+    "cookies": "cookies/cookies.txt"
 })
 
 # 使用浏览器 cookies

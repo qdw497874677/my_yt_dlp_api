@@ -10,7 +10,6 @@ WORKDIR /app
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
-        supervisor \
         apt-utils && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -23,17 +22,15 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 创建必要的目录
-RUN mkdir -p /var/log/supervisor /app/downloads /app/data /app/cookies
+RUN mkdir -p /app/downloads /app/data /app/cookies
 
 # 复制应用代码
 COPY . .
-
-# 复制supervisor配置
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # 设置权限
 RUN chmod +x /app/start.sh
 
 EXPOSE 8000 7860
 
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# 启动FastAPI服务
+CMD ["python", "main.py"]

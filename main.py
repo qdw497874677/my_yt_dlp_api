@@ -776,9 +776,29 @@ def start_api():
 
 if __name__ == "__main__":
     print("Starting yt-dlp API server...")
+    logger.info("=" * 50)
     logger.info("yt-dlp API server starting...")
     logger.info("Server configuration:")
     logger.info("  Host: 0.0.0.0")
     logger.info("  Port: 8000")
     logger.info("  PID: %s", os.getpid())
-    start_api()
+    logger.info("=" * 50)
+    
+    # 注册信号处理器以便优雅关闭
+    import signal
+    import sys
+    
+    def signal_handler(sig, frame):
+        logger.info("Received signal %s, shutting down gracefully...", sig)
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    try:
+        start_api()
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user")
+    except Exception as e:
+        logger.error("Server error: %s", str(e))
+        sys.exit(1)
