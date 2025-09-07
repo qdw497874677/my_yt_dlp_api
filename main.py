@@ -255,17 +255,43 @@ def delete_task_file(task: Task) -> bool:
         return False
     
     try:
-        # 从结果中提取文件名
-        filename = task.result.get("requested_downloads", [{}])[0].get("filename")
+        # 从结果中提取文件名和路径
+        filename = None
+        
+        # 首先尝试从requested_downloads获取文件名
+        requested_downloads = task.result.get("requested_downloads", [])
+        if requested_downloads and len(requested_downloads) > 0:
+            filename = requested_downloads[0].get("filepath") or requested_downloads[0].get("filename")
+        
+        # 如果没有找到，尝试从requested_filename获取
         if not filename:
             requested_filename = task.result.get("requested_filename")
             if requested_filename:
                 filename = requested_filename
-            else:
-                # 尝试构建可能的文件路径
+        
+        # 如果仍然没有找到，尝试构建文件路径
+        if not filename:
+            title = task.result.get("title", "video")
+            ext = task.result.get("ext", "mp4")
+            # 使用安全的文件名生成函数
+            safe_filename = create_safe_filename(title, task.format, ext)
+            filename = os.path.join(task.output_path, safe_filename)
+        
+        # 检查文件是否存在
+        if not filename or not os.path.exists(filename):
+            # 如果文件不存在，尝试在output_path目录中查找匹配的文件
+            if os.path.exists(task.output_path):
+                # 获取output_path目录中的所有文件
+                files = os.listdir(task.output_path)
+                # 尝试匹配标题的文件
                 title = task.result.get("title", "video")
-                ext = task.result.get("ext", "mp4")
-                filename = os.path.join(task.output_path, f"{title}.{ext}")
+                # 移除特殊字符并转换为小写进行匹配
+                normalized_title = NormalizeString(title).lower()
+                for file in files:
+                    # 检查文件名是否包含标题
+                    if normalized_title in file.lower():
+                        filename = os.path.join(task.output_path, file)
+                        break
         
         # 检查文件是否存在并删除
         if filename and os.path.exists(filename):
@@ -665,21 +691,47 @@ async def download_completed_video(task_id: str):
     
     # 获取文件路径
     try:
-        # 从结果中提取文件名和路径 tast.result.requested_downloads[0].filename
-        filename = task.result.get("requested_downloads", [{}])[0].get("filename")
+        # 从结果中提取文件名和路径
+        filename = None
+        
+        # 首先尝试从requested_downloads获取文件名
+        requested_downloads = task.result.get("requested_downloads", [])
+        if requested_downloads and len(requested_downloads) > 0:
+            filename = requested_downloads[0].get("filepath") or requested_downloads[0].get("filename")
+        
+        # 如果没有找到，尝试从requested_filename获取
         if not filename:
             requested_filename = task.result.get("requested_filename")
             if requested_filename:
                 filename = requested_filename
-            else:
-                # 尝试构建可能的文件路径
-                title = task.result.get("title", "video")
-                ext = task.result.get("ext", "mp4")
-                filename = os.path.join(task.output_path, f"{title}.{ext}")
+        
+        # 如果仍然没有找到，尝试构建文件路径
+        if not filename:
+            title = task.result.get("title", "video")
+            ext = task.result.get("ext", "mp4")
+            # 使用安全的文件名生成函数
+            safe_filename = create_safe_filename(title, task.format, ext)
+            filename = os.path.join(task.output_path, safe_filename)
         
         # 检查文件是否存在
-        if not os.path.exists(filename):
-            raise HTTPException(status_code=404, detail="Video file not found on server")
+        if not filename or not os.path.exists(filename):
+            # 如果文件不存在，尝试在output_path目录中查找匹配的文件
+            if os.path.exists(task.output_path):
+                # 获取output_path目录中的所有文件
+                files = os.listdir(task.output_path)
+                # 尝试匹配标题的文件
+                title = task.result.get("title", "video")
+                # 移除特殊字符并转换为小写进行匹配
+                normalized_title = NormalizeString(title).lower()
+                for file in files:
+                    # 检查文件名是否包含标题
+                    if normalized_title in file.lower():
+                        filename = os.path.join(task.output_path, file)
+                        break
+            
+            # 如果仍然找不到文件，抛出错误
+            if not filename or not os.path.exists(filename):
+                raise HTTPException(status_code=404, detail="Video file not found on server")
         
         # 提取实际文件名用于Content-Disposition头
         file_basename = os.path.basename(filename)
