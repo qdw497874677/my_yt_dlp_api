@@ -10,11 +10,20 @@ import json
 import datetime
 import sqlite3
 from typing import Dict, Any, Optional, List
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse
 import uvicorn
 from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor
+
+# 导入cookie管理模块
+from cookie_manager import (
+    auto_cookie_manager,
+    auto_setup_cookies,
+    get_cookie_status,
+    refresh_cookies
+)
 
 # 配置日志
 logging.basicConfig(
@@ -95,6 +104,8 @@ class State:
         self._init_db()
         # 从数据库加载任务状态
         self._load_tasks()
+        # 初始化cookie管理
+        self.cookie_initialized = False
     
     def _init_db(self) -> None:
         """初始化SQLite数据库"""
@@ -224,7 +235,7 @@ class State:
         if task_id in self.tasks:
             # 从内存中删除任务
             del self.tasks[task_id]
-            
+
             # 从数据库中删除任务
             try:
                 conn = sqlite3.connect(self.db_file)
@@ -237,6 +248,55 @@ class State:
                 print(f"Error deleting task from database: {e}")
                 return False
         return False
+
+    async def initialize_cookies(self) -> Dict:
+        """初始化cookie管理"""
+        if not self.cookie_initialized:
+            logger.info("正在初始化cookie管理...")
+            try:
+                result = await auto_setup_cookies()
+                self.cookie_initialized = True
+
+                # 确保结果可以被JSON序列化（转换PosixPath为字符串）
+                if isinstance(result.get("active_cookie"), Path):
+                    result["active_cookie"] = str(result["active_cookie"])
+
+                return result
+            except Exception as e:
+                logger.error(f"Cookie初始化失败: {e}")
+                return {"success": False, "error": str(e)}
+        else:
+            return {"success": True, "message": "Cookie已初始化"}
+
+    async def get_cookies_for_download(self, url: str) -> Optional[str]:
+        """获取下载用的cookies"""
+        if not self.cookie_initialized:
+            await self.initialize_cookies()
+
+        # 获取活跃的cookie文件
+        active_cookie = auto_cookie_manager.get_active_cookie_path()
+
+        if active_cookie:
+            # 快速验证cookie有效性
+            try:
+                validation = await auto_cookie_manager.validate_cookie_file(active_cookie, detailed=False)
+                if validation.get("valid"):
+                    return active_cookie
+                else:
+                    logger.warning(f"活跃cookie已失效: {active_cookie}")
+            except Exception as e:
+                logger.warning(f"验证cookie失败: {e}")
+
+        # 如果没有活跃cookie或已失效，尝试刷新
+        logger.info("尝试刷新cookies...")
+        try:
+            refresh_result = await refresh_cookies()
+            if refresh_result.get("success"):
+                return refresh_result.get("new_cookie")
+        except Exception as e:
+            logger.error(f"刷新cookies失败: {e}")
+
+        return None
 
 # 创建全局状态对象
 state = State()
@@ -482,6 +542,15 @@ async def api_download_video(request: DownloadRequest):
     Submit a video download task and return a task ID to track progress.
     """
     print(f"Received download request for URL: {request.url}")
+
+    # 如果没有指定cookies，尝试自动获取
+    if not request.cookies:
+        print("No cookies specified, attempting to auto-detect...")
+        auto_cookies = await state.get_cookies_for_download(request.url)
+        if auto_cookies:
+            request.cookies = auto_cookies
+            print(f"Auto-detected cookies: {auto_cookies}")
+
     # 如果有相同的url和output_path的任务已经存在，检查任务状态
     existing_task = next((task for task in state.tasks.values() if task.format == request.format and task.url == request.url and task.output_path == request.output_path), None)
     if existing_task:
@@ -491,7 +560,7 @@ async def api_download_video(request: DownloadRequest):
             print(f"Existing task failed, creating new task")
             task_id = state.add_task(request.url, request.output_path, request.format)
             print(f"Created new task with ID: {task_id}")
-            
+
             # Asynchronously execute download task
             print("Creating async task for download")
             asyncio.create_task(process_download_task(
@@ -503,16 +572,16 @@ async def api_download_video(request: DownloadRequest):
                 cookies=request.cookies
             ))
             print("Async task created")
-            
+
             return {"status": "success", "task_id": task_id}
         else:
             # 对于非失败状态的任务，返回现有任务ID
             return {"status": "success", "task_id": existing_task.id}
-    
+
     # 创建新任务
     task_id = state.add_task(request.url, request.output_path, request.format)
     print(f"Created new task with ID: {task_id}")
-    
+
     # Asynchronously execute download task
     print("Creating async task for download")
     asyncio.create_task(process_download_task(
@@ -524,7 +593,7 @@ async def api_download_video(request: DownloadRequest):
         cookies=request.cookies
     ))
     print("Async task created")
-    
+
     return {"status": "success", "task_id": task_id}
 
 @app.get("/task/{task_id}", response_class=JSONResponse)
@@ -815,6 +884,177 @@ async def delete_all_tasks():
             "failed_tasks": failed_tasks
         }
     )
+
+
+# Cookie管理API端点
+@app.post("/cookies/auto-setup", response_class=JSONResponse)
+async def auto_setup_cookies_endpoint():
+    """
+    自动设置cookies - 扫描浏览器并自动配置
+    """
+    try:
+        result = await state.initialize_cookies()
+        return JSONResponse(
+            status_code=200,
+            content=result
+        )
+    except Exception as e:
+        logger.error(f"Auto setup cookies failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/cookies/status", response_class=JSONResponse)
+async def get_cookie_status_endpoint():
+    """
+    获取当前cookie状态
+    """
+    try:
+        status = await get_cookie_status()
+        return JSONResponse(
+            status_code=200,
+            content=status
+        )
+    except Exception as e:
+        logger.error(f"Get cookie status failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/cookies/refresh", response_class=JSONResponse)
+async def refresh_cookies_endpoint():
+    """
+    刷新cookies - 重新扫描浏览器获取最新cookies
+    """
+    try:
+        result = await refresh_cookies()
+        return JSONResponse(
+            status_code=200,
+            content=result
+        )
+    except Exception as e:
+        logger.error(f"Refresh cookies failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/cookies/diagnose", response_class=JSONResponse)
+async def diagnose_environment_endpoint():
+    """
+    诊断环境问题 - 检查系统、浏览器、权限等
+    """
+    try:
+        diagnosis = await auto_cookie_manager.diagnose_environment()
+        return JSONResponse(
+            status_code=200,
+            content=diagnosis
+        )
+    except Exception as e:
+        logger.error(f"Diagnose environment failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/cookies/list", response_class=JSONResponse)
+async def list_cookies_endpoint():
+    """
+    列出所有可用的cookie文件
+    """
+    try:
+        import os
+        from pathlib import Path
+
+        cookie_dir = Path("cookies")
+        if not cookie_dir.exists():
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "cookies": [],
+                    "message": "Cookie目录不存在"
+                }
+            )
+
+        cookies = []
+        for cookie_file in cookie_dir.glob("*.txt"):
+            try:
+                stat = cookie_file.stat()
+                cookies.append({
+                    "filename": cookie_file.name,
+                    "path": str(cookie_file),
+                    "size": stat.st_size,
+                    "created": datetime.datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                    "modified": datetime.datetime.fromtimestamp(stat.st_mtime).isoformat()
+                })
+            except Exception as e:
+                logger.warning(f"Failed to read cookie file {cookie_file}: {e}")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "cookies": sorted(cookies, key=lambda x: x['modified'], reverse=True)
+            }
+        )
+    except Exception as e:
+        logger.error(f"List cookies failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/cookies/validate/{filename}", response_class=JSONResponse)
+async def validate_cookie_file_endpoint(filename: str):
+    """
+    验证指定的cookie文件
+    """
+    try:
+        cookie_file = os.path.join("cookies", filename)
+        if not os.path.exists(cookie_file):
+            raise HTTPException(status_code=404, detail="Cookie文件不存在")
+
+        result = await auto_cookie_manager.validate_cookie_file(cookie_file)
+        return JSONResponse(
+            status_code=200,
+            content=result
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Validate cookie file failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/cookies/cleanup", response_class=JSONResponse)
+async def cleanup_cookies_endpoint():
+    """
+    清理过期的cookies文件
+    """
+    try:
+        result = await auto_cookie_manager.cookie_manager.cleanup_expired_cookies()
+        return JSONResponse(
+            status_code=200,
+            content=result
+        )
+    except Exception as e:
+        logger.error(f"Cleanup cookies failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/cookies/supported-browsers", response_class=JSONResponse)
+async def get_supported_browsers_endpoint():
+    """
+    获取支持的浏览器列表
+    """
+    try:
+        browsers = auto_cookie_manager.get_supported_browsers()
+        detected = detect_browsers()
+
+        browser_info = []
+        for browser in browsers:
+            browser_info.append({
+                "name": browser,
+                "supported": True,
+                "detected": detected.get(browser, False)
+            })
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "browsers": browser_info
+            }
+        )
+    except Exception as e:
+        logger.error(f"Get supported browsers failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def start_api():

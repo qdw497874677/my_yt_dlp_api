@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "yt-dlp-cookie-manager": {
+      "command": "python",
+      "args": ["/Users/quandawei/项目/my_yt_dlp_api/mcp_server.py"],
+      "env": {
+        "PYTHONPATH": "/Users/quandawei/项目/my_yt_dlp_api"
+      }
+    }
+  }
+}

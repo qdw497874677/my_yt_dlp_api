@@ -3,14 +3,40 @@ version: '3.8'
 services:
   yt-dlp-api-service:
     build: .
+    container_name: yt-dlp-api-service
     ports:
       - "18000:8000"
       - "17860:7860"
     volumes:
       - ./downloads:/app/downloads
       - ./data:/app/data
+      - ./cookies:/app/cookies
     environment:
       - PYTHONUNBUFFERED=1
       - API_BASE_URL=http://yt-dlp-api-service:8000
       - DOCKER_ENV=true
+      - PYTHONPATH=/app
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/docs', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - yt-dlp-network
+
+# 注意：MCP服务器运行在宿主机上，不需要容器化
+# 通过host.docker.internal访问API服务
+
+networks:
+  yt-dlp-network:
+    driver: bridge
+
+volumes:
+  downloads:
+    driver: local
+  data:
+    driver: local
+  cookies:
+    driver: local
