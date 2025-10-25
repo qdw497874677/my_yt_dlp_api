@@ -41,6 +41,7 @@ ENV/
 data/*.db-journal
 *.db-shm
 *.db-wal
+data/
 
 # Temporary files
 *.tmp

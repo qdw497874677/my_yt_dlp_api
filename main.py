@@ -737,7 +737,7 @@ app = FastAPI(title="yt-dlp API", description="API for downloading videos using 
 class DownloadRequest(BaseModel):
     url: str
     output_path: str = "./downloads"
-    format: str = "bestvideo+bestaudio/best"
+    format: str = "best[ext=mp4]"
     quiet: bool = False
     cookies: str = None
 
@@ -1349,6 +1349,144 @@ async def get_supported_browsers_endpoint():
         )
     except Exception as e:
         logger.error(f"Get supported browsers failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/ytdlp/version", response_class=JSONResponse)
+async def get_ytdlp_version():
+    """
+    获取当前yt-dlp版本信息
+    """
+    try:
+        version = yt_dlp.version.__version__
+        release = yt_dlp.version.RELEASE_GIT_HEAD if hasattr(yt_dlp.version, 'RELEASE_GIT_HEAD') else None
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "version": version,
+                "release": release,
+                "package": "yt-dlp"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Get yt-dlp version failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/ytdlp/update", response_class=JSONResponse)
+async def update_ytdlp():
+    """
+    更新yt-dlp到最新版本
+    """
+    try:
+        import subprocess
+        import sys
+
+        logger.info("开始更新yt-dlp...")
+
+        # 使用pip更新yt-dlp
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
+            capture_output=True,
+            text=True,
+            timeout=300  # 5分钟超时
+        )
+
+        if result.returncode == 0:
+            # 获取新版本信息
+            new_version = yt_dlp.version.__version__
+
+            # 记录更新结果
+            logger.info(f"yt-dlp更新成功: {result.stdout}")
+
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "message": "yt-dlp更新成功",
+                    "new_version": new_version,
+                    "output": result.stdout
+                }
+            )
+        else:
+            logger.error(f"yt-dlp更新失败: {result.stderr}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "status": "error",
+                    "message": "yt-dlp更新失败",
+                    "error": result.stderr,
+                    "output": result.stdout
+                }
+            )
+
+    except subprocess.TimeoutExpired:
+        logger.error("yt-dlp更新超时")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": "更新超时，请稍后重试"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Update yt-dlp failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/ytdlp/check-update", response_class=JSONResponse)
+async def check_ytdlp_update():
+    """
+    检查yt-dlp是否有可用更新
+    """
+    try:
+        import subprocess
+        import sys
+
+        # 检查可用更新
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "list", "--outdated"],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+
+        current_version = yt_dlp.version.__version__
+        has_update = False
+        latest_version = None
+
+        # 解析pip输出查找yt-dlp
+        if result.returncode == 0:
+            for line in result.stdout.split('\n'):
+                if 'yt-dlp' in line:
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        latest_version = parts[2]
+                        if latest_version != current_version:
+                            has_update = True
+                        break
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "current_version": current_version,
+                "latest_version": latest_version,
+                "has_update": has_update,
+                "update_available": has_update
+            }
+        )
+
+    except subprocess.TimeoutExpired:
+        logger.error("检查yt-dlp更新超时")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": "检查更新超时"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Check yt-dlp update failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

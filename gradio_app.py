@@ -224,8 +224,17 @@ with gr.Blocks(title="yt-dlp 视频下载器") as demo:
             url_input = gr.Textbox(label="视频URL", placeholder="请输入视频链接")
         with gr.Row():
             format_choice = gr.Dropdown(
-                choices=["best", "bestvideo+bestaudio/best", "mp4", "webm", "flv"],
-                value="bestvideo+bestaudio/best",
+                choices=[
+                    "best[ext=mp4]",           # MP4格式最佳质量
+                    "best[height<=1080]",      # 1080p以下最佳质量
+                    "best[height<=720]",       # 720p以下最佳质量
+                    "best[height<=480]",       # 480p以下最佳质量
+                    "mp4",                     # 通用MP4格式
+                    "webm",                    # WebM格式
+                    "best",                    # 最佳可用格式(兜底)
+                    "worst"                    # 最低质量(用于测试)
+                ],
+                value="best[ext=mp4]",
                 label="下载格式"
             )
         with gr.Row():
