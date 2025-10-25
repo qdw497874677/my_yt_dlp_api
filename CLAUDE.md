@@ -49,6 +49,22 @@ docker build -t yt-dlp-api-service .
 docker run -p 8000:8000 -v $(pwd)/downloads:/app/downloads yt-dlp-api-service
 ```
 
+### Development Tools
+
+```bash
+# Cookie management and testing
+python cookie_tool.py  # Interactive cookie management tool
+
+# Run with specific port for local testing
+python main.py --port 8001
+
+# Run with debug mode
+export PYTHONPATH=/app && python -m debugpy --listen 5678 --wait-for-client main.py
+
+# Test cookie auto-detection
+python -c "from cookie_manager import auto_setup_cookies; import asyncio; print(asyncio.run(auto_setup_cookies()))"
+```
+
 ## Architecture Overview
 
 ### Core Components
@@ -80,6 +96,13 @@ docker run -p 8000:8000 -v $(pwd)/downloads:/app/downloads yt-dlp-api-service
    - Environment variable configuration for container detection
    - Enhanced logging configuration
 
+5. **Cookie Management System** (`cookie_manager/` and `utils/`):
+   - Automatic browser cookie detection and extraction
+   - Cross-platform browser support (Chrome, Firefox, Edge, Safari, Opera)
+   - Cookie validation and management with expiration handling
+   - Browser process detection and file locking checks
+   - Multi-browser cookie file management and cleanup
+
 ### Key Features
 
 1. **Asynchronous Processing**: Download tasks run asynchronously without blocking the API
@@ -105,6 +128,17 @@ docker run -p 8000:8000 -v $(pwd)/downloads:/app/downloads yt-dlp-api-service
 - DELETE /task/{task_id} - Delete a specific task and its associated file
 - DELETE /tasks - Delete all tasks and their associated files
 
+### Cookie Management Endpoints
+
+- POST /cookies/auto-setup - Automatically setup cookies from detected browsers
+- GET /cookies/status - Get current cookie status and validation
+- POST /cookies/refresh - Refresh cookies from browsers
+- GET /cookies/diagnose - Diagnose environment and browser issues
+- GET /cookies/list - List all available cookie files
+- POST /cookies/validate/{filename} - Validate specific cookie file
+- DELETE /cookies/cleanup - Clean up expired cookies
+- GET /cookies/supported-browsers - Get list of supported browsers
+
 ## Development Notes
 
 1. The project uses Supervisor to manage both FastAPI and Gradio services in Docker
@@ -116,6 +150,26 @@ docker run -p 8000:8000 -v $(pwd)/downloads:/app/downloads yt-dlp-api-service
 7. Safe filename generation prevents filesystem issues with special characters
 8. Enhanced logging helps with debugging and monitoring
 9. Better error handling improves user experience
+
+### Architecture Details
+
+**Task Management Flow:**
+- Tasks are stored in SQLite with UUID generation
+- Async processing using ThreadPoolExecutor for yt-dlp operations
+- File cleanup on task deletion with comprehensive path resolution
+- Automatic task resumption from database on restart
+
+**Cookie System Architecture:**
+- `cookie_manager/`: Core cookie management with detection, validation, and auto-refresh
+- `utils/browser_utils.py`: Cross-platform browser detection and system integration
+- Supports multiple cookie sources: browser detection, file upload, and manual paths
+- Automatic cookie validation and expiration handling
+
+**Container Considerations:**
+- In Docker: API runs on port 8000, Gradio on 7860
+- Host mapping: API on 18000, Gradio on 17860
+- Volume mounts for persistent data across container restarts
+- Environment variable `DOCKER_ENV` for container-aware behavior
 
 ## Testing
 
@@ -149,12 +203,21 @@ curl -X DELETE "http://localhost:8000/tasks"
 .
 ├── main.py                 # FastAPI backend service
 ├── gradio_app.py           # Gradio frontend interface
+├── cookie_tool.py          # Interactive cookie management tool
+├── mcp_server.py           # MCP server integration
 ├── requirements.txt        # Python dependencies
 ├── Dockerfile              # Docker image definition
 ├── docker-compose.yml      # Docker Compose configuration
 ├── docker-compose-pull.yml # Pre-built image configuration
 ├── supervisord.conf        # Supervisor process management
 ├── start.sh                # Startup script
+├── cookie_manager/         # Cookie management module
+│   ├── __init__.py        # Main cookie manager interface
+│   ├── config.py          # Configuration management
+│   ├── scanner.py         # Browser cookie scanner
+│   └── validator.py       # Cookie validation and management
+├── utils/
+│   └── browser_utils.py   # Cross-platform browser utilities
 ├── data/                   # SQLite database storage
 ├── downloads/              # Downloaded video storage
 ├── cookies/                # Uploaded cookies files
@@ -162,3 +225,20 @@ curl -X DELETE "http://localhost:8000/tasks"
 ├── .gitignore              # Git ignore file
 └── CLAUDE.md               # This file
 ```
+
+## Key Dependencies
+
+**Core Services:**
+- `fastapi==0.115.12` - Web framework for API
+- `gradio==4.39.0` - Web interface framework
+- `yt-dlp==2025.3.31` - Video downloading backend
+- `uvicorn==0.115.6` - ASGI server
+
+**Cookie Management:**
+- `browser-cookie3==0.19.1` - Browser cookie extraction
+- `psutil==6.1.1` - System process monitoring
+- `aiohttp==3.11.12` - Async HTTP client
+
+**Development:**
+- `supervisor==4.2.5` - Process management (Docker)
+- `requests==2.32.3` - HTTP client library

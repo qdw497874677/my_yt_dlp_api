@@ -491,19 +491,246 @@ def get_video_info(url: str, quiet: bool = False, cookies: str = None) -> Dict[s
 def list_available_formats(url: str, cookies: str = None) -> List[Dict[str, Any]]:
     """
     List all available formats for a video.
-    
+
     Args:
         url (str): The URL of the video
         cookies (str): Path to cookies file or browser name for cookies
-        
+
     Returns:
         List[Dict[str, Any]]: List of available formats
     """
     info = get_video_info(url, cookies=cookies)
     if not info:
         return []
-    
+
     return info.get('formats', [])
+
+def get_video_thumbnails(url: str, cookies: str = None) -> List[Dict[str, Any]]:
+    """
+    Get video thumbnails in different resolutions.
+
+    Args:
+        url (str): The URL of the video
+        cookies (str): Path to cookies file or browser name for cookies
+
+    Returns:
+        List[Dict[str, Any]]: List of thumbnail information
+    """
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'list_thumbnails': True,
+    }
+
+    # 添加cookie支持
+    if cookies:
+        if cookies.endswith('.txt'):
+            ydl_opts['cookiefile'] = cookies
+        else:
+            ydl_opts['cookiesfrombrowser'] = (cookies,)
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        thumbnails = info.get('thumbnails', [])
+
+        # 整理缩略图信息
+        processed_thumbnails = []
+        for thumb in thumbnails:
+            processed_thumbnails.append({
+                'url': thumb.get('url'),
+                'width': thumb.get('width'),
+                'height': thumb.get('height'),
+                'resolution': f"{thumb.get('width', '?')}x{thumb.get('height', '?')}",
+                'preference': thumb.get('preference', 0),
+                'id': thumb.get('id')
+            })
+
+        # 按偏好排序，高质量在前
+        processed_thumbnails.sort(key=lambda x: x.get('preference', 0), reverse=True)
+
+        return processed_thumbnails
+
+def get_video_subtitles(url: str, cookies: str = None) -> Dict[str, Any]:
+    """
+    Get available subtitles for a video.
+
+    Args:
+        url (str): The URL of the video
+        cookies (str): Path to cookies file or browser name for cookies
+
+    Returns:
+        Dict[str, Any]: Subtitle information including available languages
+    """
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'listsubtitles': True,
+        'writesubtitles': False,
+        'writeautomaticsub': False,
+    }
+
+    # 添加cookie支持
+    if cookies:
+        if cookies.endswith('.txt'):
+            ydl_opts['cookiefile'] = cookies
+        else:
+            ydl_opts['cookiesfrombrowser'] = (cookies,)
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+
+        return {
+            'subtitles': info.get('subtitles', {}),
+            'automatic_captions': info.get('automatic_captions', {}),
+            'available_languages': list(info.get('subtitles', {}).keys()),
+            'automatic_languages': list(info.get('automatic_captions', {}).keys())
+        }
+
+def download_subtitle(url: str, language: str, subtitle_format: str = "srt", cookies: str = None) -> str:
+    """
+    Download subtitle for a video in specified language and format.
+
+    Args:
+        url (str): The URL of the video
+        language (str): Language code (e.g., 'en', 'zh', 'ja')
+        subtitle_format (str): Subtitle format (e.g., 'srt', 'vtt', 'ass')
+        cookies (str): Path to cookies file or browser name for cookies
+
+    Returns:
+        str: Path to downloaded subtitle file
+    """
+    import tempfile
+    import os
+
+    # 创建临时目录
+    temp_dir = tempfile.mkdtemp()
+
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'writesubtitles': True,
+        'writeautomaticsub': True,
+        'subtitleslangs': [language],
+        'subtitlesformat': subtitle_format,
+        'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
+    }
+
+    # 添加cookie支持
+    if cookies:
+        if cookies.endswith('.txt'):
+            ydl_opts['cookiefile'] = cookies
+        else:
+            ydl_opts['cookiesfrombrowser'] = (cookies,)
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            info = ydl.extract_info(url, download=False)
+
+            # 检查是否有请求的字幕
+            subtitles = info.get('subtitles', {})
+            automatic_captions = info.get('automatic_captions', {})
+
+            if language not in subtitles and language not in automatic_captions:
+                raise ValueError(f"Subtitle not available for language: {language}")
+
+            # 下载字幕
+            ydl.download([url])
+
+            # 查找下载的字幕文件
+            subtitle_files = [f for f in os.listdir(temp_dir) if f.endswith(f'.{subtitle_format}')]
+            if subtitle_files:
+                return os.path.join(temp_dir, subtitle_files[0])
+            else:
+                raise ValueError("Failed to download subtitle")
+
+        except Exception as e:
+            # 清理临时目录
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise e
+
+def get_video_details(url: str, cookies: str = None) -> Dict[str, Any]:
+    """
+    Get comprehensive video information including thumbnails and subtitles.
+
+    Args:
+        url (str): The URL of the video
+        cookies (str): Path to cookies file or browser name for cookies
+
+    Returns:
+        Dict[str, Any]: Complete video information
+    """
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'list_thumbnails': True,
+        'listsubtitles': True,
+    }
+
+    # 添加cookie支持
+    if cookies:
+        if cookies.endswith('.txt'):
+            ydl_opts['cookiefile'] = cookies
+        else:
+            ydl_opts['cookiesfrombrowser'] = (cookies,)
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        sanitized = ydl.sanitize_info(info)
+
+        # 处理缩略图
+        thumbnails = sanitized.get('thumbnails', [])
+        processed_thumbnails = []
+        for thumb in thumbnails:
+            processed_thumbnails.append({
+                'url': thumb.get('url'),
+                'width': thumb.get('width'),
+                'height': thumb.get('height'),
+                'resolution': f"{thumb.get('width', '?')}x{thumb.get('height', '?')}",
+                'preference': thumb.get('preference', 0),
+                'id': thumb.get('id')
+            })
+
+        # 按偏好排序
+        processed_thumbnails.sort(key=lambda x: x.get('preference', 0), reverse=True)
+
+        # 选择最佳缩略图
+        best_thumbnail = processed_thumbnails[0] if processed_thumbnails else None
+
+        return {
+            'basic_info': {
+                'title': sanitized.get('title'),
+                'description': sanitized.get('description'),
+                'duration': sanitized.get('duration'),
+                'upload_date': sanitized.get('upload_date'),
+                'uploader': sanitized.get('uploader'),
+                'uploader_id': sanitized.get('uploader_id'),
+                'view_count': sanitized.get('view_count'),
+                'like_count': sanitized.get('like_count'),
+                'channel_id': sanitized.get('channel_id'),
+                'channel_url': sanitized.get('channel_url'),
+            },
+            'thumbnails': {
+                'all': processed_thumbnails,
+                'best': best_thumbnail,
+                'count': len(processed_thumbnails)
+            },
+            'subtitles': {
+                'manual': sanitized.get('subtitles', {}),
+                'automatic': sanitized.get('automatic_captions', {}),
+                'available_languages': list(sanitized.get('subtitles', {}).keys()),
+                'automatic_languages': list(sanitized.get('automatic_captions', {}).keys())
+            },
+            'formats': {
+                'count': len(sanitized.get('formats', [])),
+                'best_format': sanitized.get('format'),
+                'available_formats': list(set(f.get('ext') for f in sanitized.get('formats', []) if f.get('ext')))
+            }
+        }
 
 app = FastAPI(title="yt-dlp API", description="API for downloading videos using yt-dlp")
 
@@ -646,7 +873,75 @@ async def api_list_formats(url: str = Query(..., description="The URL of the vid
     List all available formats for a video.
     """
     try:
+        # 如果没有指定cookies，尝试自动获取
+        if not cookies:
+            print("No cookies specified, attempting to auto-detect...")
+            auto_cookies = await state.get_cookies_for_download(url)
+            if auto_cookies:
+                cookies = auto_cookies
+                print(f"Auto-detected cookies: {auto_cookies}")
+
         result = list_available_formats(url, cookies=cookies)
+        return {"status": "success", "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/thumbnails", response_class=JSONResponse)
+async def api_get_thumbnails(url: str = Query(..., description="The URL of the video"), cookies: str = Query(None, description="Path to cookies file or browser name")):
+    """
+    Get video thumbnails in different resolutions.
+    """
+    try:
+        result = get_video_thumbnails(url, cookies=cookies)
+        return {"status": "success", "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/subtitles", response_class=JSONResponse)
+async def api_list_subtitles(url: str = Query(..., description="The URL of the video"), cookies: str = Query(None, description="Path to cookies file or browser name")):
+    """
+    List available subtitles for a video.
+    """
+    try:
+        result = get_video_subtitles(url, cookies=cookies)
+        return {"status": "success", "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/subtitle", response_class=FileResponse)
+async def api_download_subtitle(
+    url: str = Query(..., description="The URL of the video"),
+    language: str = Query(..., description="Language code (e.g., 'en', 'zh', 'ja')"),
+    subtitle_format: str = Query("srt", description="Subtitle format (e.g., 'srt', 'vtt', 'ass')"),
+    cookies: str = Query(None, description="Path to cookies file or browser name")
+):
+    """
+    Download subtitle for a video.
+    """
+    try:
+        subtitle_path = download_subtitle(url, language, subtitle_format, cookies)
+
+        # 读取文件内容并返回
+        import os
+        filename = os.path.basename(subtitle_path)
+
+        return FileResponse(
+            path=subtitle_path,
+            filename=filename,
+            media_type=f"text/{subtitle_format}"
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/video-details", response_class=JSONResponse)
+async def api_get_video_details(url: str = Query(..., description="The URL of the video"), cookies: str = Query(None, description="Path to cookies file or browser name")):
+    """
+    Get comprehensive video information including thumbnails and subtitles.
+    """
+    try:
+        result = get_video_details(url, cookies=cookies)
         return {"status": "success", "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
