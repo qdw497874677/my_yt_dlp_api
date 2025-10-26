@@ -886,6 +886,180 @@ async def api_list_formats(url: str = Query(..., description="The URL of the vid
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/download-formats", response_class=JSONResponse)
+async def api_list_download_formats(url: str = Query(..., description="The URL of the video"), cookies: str = Query(None, description="Path to cookies file or browser name")):
+    """
+    List download-friendly formats with format IDs that can be used with the download API.
+    This endpoint provides optimized format selections for downloading.
+    """
+    try:
+        # 如果没有指定cookies，尝试自动获取
+        if not cookies:
+            print("No cookies specified, attempting to auto-detect...")
+            auto_cookies = await state.get_cookies_for_download(url)
+            if auto_cookies:
+                cookies = auto_cookies
+                print(f"Auto-detected cookies: {auto_cookies}")
+
+        # 获取所有可用格式
+        formats = list_available_formats(url, cookies=cookies)
+        if not formats:
+            return {"status": "success", "data": {"formats": [], "recommended": []}}
+
+        # 处理格式信息，提取下载相关的关键信息
+        download_formats = []
+        recommended_formats = []
+        
+        for fmt in formats:
+            # 提取关键信息
+            format_info = {
+                "format_id": fmt.get("format_id", ""),
+                "ext": fmt.get("ext", ""),
+                "resolution": fmt.get("resolution", ""),
+                "fps": fmt.get("fps", 0),
+                "filesize": fmt.get("filesize"),
+                "filesize_approx": fmt.get("filesize_approx"),
+                "tbr": fmt.get("tbr", 0),  # 总比特率
+                "vbr": fmt.get("vbr", 0),  # 视频比特率
+                "abr": fmt.get("abr", 0),  # 音频比特率
+                "acodec": fmt.get("acodec", ""),
+                "vcodec": fmt.get("vcodec", ""),
+                "container": fmt.get("container", ""),
+                "quality": fmt.get("quality", 0),
+                "format_note": fmt.get("format_note", ""),
+                "language": fmt.get("language", ""),
+                "proto": fmt.get("proto", ""),
+                # 添加是否包含视频和音频的标识
+                "has_video": bool(fmt.get("vcodec") and fmt.get("vcodec") != "none"),
+                "has_audio": bool(fmt.get("acodec") and fmt.get("acodec") != "none"),
+                # 添加推荐的格式字符串
+                "format_selector": fmt.get("format_id", "")
+            }
+            
+            download_formats.append(format_info)
+            
+            # 识别推荐格式
+            # 1. 最佳视频质量（包含视频和音频）
+            if (format_info["has_video"] and format_info["has_audio"] and 
+                format_info["ext"] in ["mp4", "webm", "mkv"] and
+                format_info["resolution"] and format_info["resolution"] != "audio only"):
+                recommended_formats.append({
+                    **format_info,
+                    "recommendation_type": "best_combined",
+                    "description": f"最佳组合格式 - {format_info['resolution']} {format_info['ext'].upper()}"
+                })
+            
+            # 2. 仅视频格式（用于合并）
+            elif (format_info["has_video"] and not format_info["has_audio"] and
+                  format_info["ext"] in ["mp4", "webm", "mkv"] and
+                  format_info["resolution"] and format_info["resolution"] != "audio only"):
+                recommended_formats.append({
+                    **format_info,
+                    "recommendation_type": "video_only",
+                    "description": f"仅视频 - {format_info['resolution']} {format_info['ext'].upper()}"
+                })
+            
+            # 3. 仅音频格式
+            elif (not format_info["has_video"] and format_info["has_audio"] and
+                  format_info["ext"] in ["mp3", "m4a", "webm", "opus", "aac"]):
+                recommended_formats.append({
+                    **format_info,
+                    "recommendation_type": "audio_only", 
+                    "description": f"仅音频 - {format_info['ext'].upper()} {format_info['abr']}k"
+                })
+
+        # 按质量排序推荐格式
+        recommended_formats.sort(key=lambda x: (
+            0 if x["recommendation_type"] == "best_combined" else
+            1 if x["recommendation_type"] == "video_only" else 2,
+            -x.get("tbr", 0)  # 按比特率降序
+        ))
+
+        # 添加常用的预设格式选择器
+        preset_formats = [
+            {
+                "name": "best",
+                "description": "最佳质量（自动选择）",
+                "format_selector": "best",
+                "recommended": True
+            },
+            {
+                "name": "best_mp4", 
+                "description": "最佳MP4格式",
+                "format_selector": "best[ext=mp4]",
+                "recommended": True
+            },
+            {
+                "name": "best_video",
+                "description": "最佳视频质量",
+                "format_selector": "bestvideo",
+                "recommended": False
+            },
+            {
+                "name": "best_audio",
+                "description": "最佳音频质量", 
+                "format_selector": "bestaudio",
+                "recommended": False
+            },
+            {
+                "name": "worst",
+                "description": "最低质量（最小文件）",
+                "format_selector": "worst",
+                "recommended": False
+            },
+            {
+                "name": "mp4_1080p",
+                "description": "1080p MP4",
+                "format_selector": "best[height<=1080][ext=mp4]",
+                "recommended": True
+            },
+            {
+                "name": "mp4_720p",
+                "description": "720p MP4", 
+                "format_selector": "best[height<=720][ext=mp4]",
+                "recommended": True
+            },
+            {
+                "name": "mp4_480p",
+                "description": "480p MP4",
+                "format_selector": "best[height<=480][ext=mp4]", 
+                "recommended": True
+            },
+            {
+                "name": "audio_mp3",
+                "description": "MP3音频",
+                "format_selector": "bestaudio[ext=mp3]",
+                "recommended": True
+            },
+            {
+                "name": "audio_m4a",
+                "description": "M4A音频",
+                "format_selector": "bestaudio[ext=m4a]",
+                "recommended": True
+            }
+        ]
+
+        return {
+            "status": "success", 
+            "data": {
+                "formats": download_formats,
+                "recommended": recommended_formats[:10],  # 限制推荐格式数量
+                "presets": preset_formats,
+                "total_formats": len(download_formats),
+                "video_info": {
+                    "has_video": any(f["has_video"] for f in download_formats),
+                    "has_audio": any(f["has_audio"] for f in download_formats),
+                    "available_extensions": list(set(f["ext"] for f in download_formats if f["ext"])),
+                    "max_resolution": next((f["resolution"] for f in download_formats 
+                                           if f["resolution"] and f["resolution"] != "audio only" 
+                                           and f["has_video"]), None),
+                    "max_bitrate": max((f["tbr"] for f in download_formats), default=0)
+                }
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/thumbnails", response_class=JSONResponse)
 async def api_get_thumbnails(url: str = Query(..., description="The URL of the video"), cookies: str = Query(None, description="Path to cookies file or browser name")):
     """
