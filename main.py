@@ -94,6 +94,8 @@ class Task(BaseModel):
     output_path: str
     format: str
     status: str
+    task_type: str = "video"  # 新增：任务类型，默认为video
+    subtitle_config: Optional[Dict[str, Any]] = None  # 新增：字幕特定配置
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
@@ -136,7 +138,7 @@ class State:
         """初始化SQLite数据库"""
         conn = sqlite3.connect(self.db_file)
         cursor = conn.cursor()
-        
+
         # 创建任务表
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS tasks (
@@ -145,13 +147,38 @@ class State:
             output_path TEXT NOT NULL,
             format TEXT NOT NULL,
             status TEXT NOT NULL,
+            task_type TEXT DEFAULT 'video',
+            subtitle_config TEXT,
             result TEXT,
             error_json TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         ''')
-        
+
+        # 创建性能优化索引
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(task_type)
+        ''')
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_tasks_type_status ON tasks(task_type, status)
+        ''')
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_tasks_status_updated ON tasks(status, updated_at)
+        ''')
+
+        # 检查并添加新字段（向后兼容）
+        cursor.execute("PRAGMA table_info(tasks)")
+        columns = [column[1] for column in cursor.fetchall()]
+
+        # 如果没有task_type字段，则添加
+        if 'task_type' not in columns:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN task_type TEXT DEFAULT 'video'")
+
+        # 如果没有subtitle_config字段，则添加
+        if 'subtitle_config' not in columns:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN subtitle_config TEXT")
+
         conn.commit()
         conn.close()
     
@@ -160,17 +187,34 @@ class State:
         try:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
-            
-            cursor.execute("SELECT id, url, output_path, format, status, result, error_json FROM tasks")
+
+            # 检查是否有新字段
+            cursor.execute("PRAGMA table_info(tasks)")
+            columns = [column[1] for column in cursor.fetchall()]
+
+            # 根据字段情况选择查询语句
+            if 'task_type' in columns and 'subtitle_config' in columns:
+                cursor.execute("""
+                    SELECT id, url, output_path, format, status, task_type, subtitle_config, result, error_json
+                    FROM tasks
+                """)
+            else:
+                # 向后兼容，旧版本数据库
+                cursor.execute("""
+                    SELECT id, url, output_path, format, status, 'video', NULL, result, error_json
+                    FROM tasks
+                """)
+
             rows = cursor.fetchall()
-            
+
             for row in rows:
-                task_id, url, output_path, format, status, result_json, error = row
-                
+                task_id, url, output_path, format, status, task_type, subtitle_config_json, result_json, error = row
+
                 # 解析JSON结果（如果有）
                 result = json.loads(result_json) if result_json else None
                 error = json.loads(error) if error else None
-                
+                subtitle_config = json.loads(subtitle_config_json) if subtitle_config_json else None
+
                 # 创建Task对象并存储在内存中
                 task = Task(
                     id=task_id,
@@ -178,11 +222,13 @@ class State:
                     output_path=output_path,
                     format=format,
                     status=status,
+                    task_type=task_type,
+                    subtitle_config=subtitle_config,
                     result=result,
                     error=error
                 )
                 self.tasks[task_id] = task
-                
+
             conn.close()
         except Exception as e:
             print(f"Error loading tasks from database: {e}")
@@ -192,49 +238,76 @@ class State:
         try:
             # 先更新内存中的任务状态
             self.tasks[task.id] = task
-            
+
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
-            
+
             timestamp = datetime.datetime.now().isoformat()
             result_json = json.dumps(task.result) if task.result else None
             error_json = json.dumps(task.error) if task.error else None
-            
-            # 使用REPLACE策略插入/更新任务
-            cursor.execute('''
-            INSERT OR REPLACE INTO tasks (id, url, output_path, format, status, result, error_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                task.id,
-                task.url,
-                task.output_path,
-                task.format,
-                task.status,
-                result_json,
-                error_json,
-                timestamp,
-                timestamp
-            ))
-            
+            subtitle_config_json = json.dumps(task.subtitle_config) if task.subtitle_config else None
+
+            # 检查表是否有新字段
+            cursor.execute("PRAGMA table_info(tasks)")
+            columns = [column[1] for column in cursor.fetchall()]
+
+            # 根据表结构选择SQL语句
+            if 'task_type' in columns and 'subtitle_config' in columns:
+                # 新版本表结构
+                cursor.execute('''
+                INSERT OR REPLACE INTO tasks (id, url, output_path, format, status, task_type, subtitle_config, result, error_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    task.id,
+                    task.url,
+                    task.output_path,
+                    task.format,
+                    task.status,
+                    task.task_type,
+                    subtitle_config_json,
+                    result_json,
+                    error_json,
+                    timestamp,
+                    timestamp
+                ))
+            else:
+                # 旧版本表结构（向后兼容）
+                cursor.execute('''
+                INSERT OR REPLACE INTO tasks (id, url, output_path, format, status, result, error_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    task.id,
+                    task.url,
+                    task.output_path,
+                    task.format,
+                    task.status,
+                    result_json,
+                    error_json,
+                    timestamp,
+                    timestamp
+                ))
+
             conn.commit()
             conn.close()
         except Exception as e:
             print(f"Error saving task to database: {e}")
     
-    def add_task(self, url: str, output_path: str, format: str) -> str:
+    def add_task(self, url: str, output_path: str, format: str, task_type: str = "video", subtitle_config: Optional[Dict[str, Any]] = None) -> str:
         task_id = str(uuid.uuid4())
         task = Task(
             id=task_id,
             url=url,
             output_path=output_path,
             format=format,
-            status="pending"
+            status="pending",
+            task_type=task_type,
+            subtitle_config=subtitle_config
         )
         self.tasks[task_id] = task
-        
+
         # 将任务保存到数据库
         self._save_task(task)
-        
+
         return task_id
     
     def get_task(self, task_id: str) -> Optional[Task]:
@@ -766,6 +839,14 @@ class DownloadRequest(BaseModel):
     quiet: bool = False
     cookies: str = None
 
+class SubtitleDownloadRequest(BaseModel):
+    url: str
+    output_path: str = "./downloads"
+    languages: List[str] = ["en"]
+    auto_select: bool = True
+    subtitle_format: str = "srt"
+    cookies: str = None
+
 async def process_download_task(task_id: str, url: str, output_path: str, format: str, quiet: bool, cookies: str = None):
     """Asynchronously process download task"""
     try:
@@ -786,6 +867,119 @@ async def process_download_task(task_id: str, url: str, output_path: str, format
         state.update_task(task_id, "completed", result=result)
     except Exception as e:
         print(f"Download task {task_id} failed with error: {str(e)}")
+        state.update_task(task_id, "failed", error=str(e))
+
+async def process_subtitle_task(task_id: str, url: str, output_path: str, languages: List[str],
+                              auto_select: bool, subtitle_format: str, cookies: str = None):
+    """异步处理字幕下载任务"""
+    try:
+        print(f"Starting subtitle download task {task_id} for URL: {url}")
+
+        # 获取视频信息用于文件命名
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+        }
+        if cookies:
+            ydl_opts['cookiefile'] = cookies
+
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as executor:
+            # 获取视频标题用于文件命名
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = await loop.run_in_executor(executor, lambda: ydl.extract_info(url, download=False))
+                video_title = info.get('title', 'video')
+
+            downloaded_files = []
+
+            # 下载每个语言的字幕
+            for language in languages:
+                try:
+                    print(f"Downloading subtitle for language: {language}")
+                    subtitle_path = await loop.run_in_executor(
+                        executor,
+                        lambda: download_subtitle(url, language, subtitle_format, cookies)
+                    )
+
+                    # 重命名字幕文件，添加视频标题
+                    safe_filename = create_safe_filename(video_title, language, subtitle_format)
+                    final_path = os.path.join(output_path, safe_filename)
+
+                    # 确保输出目录存在
+                    os.makedirs(output_path, exist_ok=True)
+
+                    # 移动并重命名文件
+                    shutil.move(subtitle_path, final_path)
+
+                    file_info = {
+                        'language': language,
+                        'path': final_path,
+                        'format': subtitle_format,
+                        'size': os.path.getsize(final_path),
+                        'is_auto_generated': False  # 默认为人工字幕
+                    }
+                    downloaded_files.append(file_info)
+                    print(f"Subtitle downloaded successfully: {final_path}")
+
+                except Exception as lang_error:
+                    print(f"Failed to download subtitle for language {language}: {str(lang_error)}")
+                    # 如果启用了自动选择，可以尝试其他可用语言
+                    if auto_select:
+                        try:
+                            # 获取可用字幕
+                            available_subtitles = await loop.run_in_executor(
+                                executor,
+                                lambda: get_video_subtitles(url, cookies)
+                            )
+
+                            # 尝试其他可用语言
+                            for lang_code in available_subtitles.get('available_languages', []):
+                                if lang_code != language:
+                                    try:
+                                        subtitle_path = await loop.run_in_executor(
+                                            executor,
+                                            lambda: download_subtitle(url, lang_code, subtitle_format, cookies)
+                                        )
+
+                                        safe_filename = create_safe_filename(video_title, lang_code, subtitle_format)
+                                        final_path = os.path.join(output_path, safe_filename)
+
+                                        os.makedirs(output_path, exist_ok=True)
+                                        shutil.move(subtitle_path, final_path)
+
+                                        file_info = {
+                                            'language': lang_code,
+                                            'path': final_path,
+                                            'format': subtitle_format,
+                                            'size': os.path.getsize(final_path),
+                                            'is_auto_generated': lang_code in available_subtitles.get('automatic_captions', {})
+                                        }
+                                        downloaded_files.append(file_info)
+                                        print(f"Auto-selected subtitle downloaded: {final_path}")
+                                        break
+                                    except:
+                                        continue
+                        except Exception as auto_error:
+                            print(f"Auto-selection failed: {str(auto_error)}")
+                            continue
+
+        # 计算总文件数和大小
+        total_files = len(downloaded_files)
+        total_size = sum(f['size'] for f in downloaded_files) if downloaded_files else 0
+
+        result = {
+            'downloaded_files': downloaded_files,
+            'total_files': total_files,
+            'total_size': total_size,
+            'video_title': video_title
+        }
+
+        print(f"Subtitle download task {task_id} completed successfully. Files: {total_files}")
+        state.update_task(task_id, "completed", result=result)
+
+    except Exception as e:
+        print(f"Subtitle download task {task_id} failed with error: {str(e)}")
         state.update_task(task_id, "failed", error=str(e))
 
 @app.post("/download", response_class=JSONResponse)
@@ -845,6 +1039,118 @@ async def api_download_video(request: DownloadRequest):
         cookies=request.cookies
     ))
     print("Async task created")
+
+    return {"status": "success", "task_id": task_id}
+
+@app.post("/download-subtitles", response_class=JSONResponse)
+async def api_download_subtitles(request: SubtitleDownloadRequest):
+    """
+    Submit a subtitle download task and return a task ID to track progress.
+    """
+    print(f"Received subtitle download request for URL: {request.url}")
+
+    # 验证语言代码
+    supported_languages = ['en', 'zh', 'es', 'fr', 'de', 'ja', 'ko', 'ru', 'ar', 'hi', 'pt', 'it', 'nl', 'pl', 'sv', 'da', 'no', 'fi']
+    for lang in request.languages:
+        if lang not in supported_languages:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported language code: {lang}. Supported languages: {', '.join(supported_languages)}"
+            )
+
+    # 验证字幕格式
+    supported_formats = ['srt', 'vtt', 'ass', 'ssa']
+    if request.subtitle_format not in supported_formats:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported subtitle format: {request.subtitle_format}. Supported formats: {', '.join(supported_formats)}"
+        )
+
+    # 如果没有指定cookies，尝试自动获取
+    if not request.cookies:
+        print("No cookies specified, attempting to auto-detect...")
+        auto_cookies = await state.get_cookies_for_download(request.url)
+        if auto_cookies:
+            request.cookies = auto_cookies
+            print(f"Auto-detected cookies: {auto_cookies}")
+
+    # 检查是否存在相同的字幕任务
+    existing_task = None
+    for task in state.tasks.values():
+        if (task.task_type == "subtitle" and
+            task.url == request.url and
+            task.output_path == request.output_path and
+            task.subtitle_config and
+            task.subtitle_config.get('languages') == request.languages and
+            task.subtitle_config.get('subtitle_format') == request.subtitle_format):
+            existing_task = task
+            break
+
+    if existing_task:
+        print(f"Found existing subtitle task with ID: {existing_task.id}")
+        # 如果任务失败了，创建新任务
+        if existing_task.status == "failed":
+            print(f"Existing subtitle task failed, creating new task")
+            subtitle_config = {
+                'languages': request.languages,
+                'auto_select': request.auto_select,
+                'subtitle_format': request.subtitle_format
+            }
+            task_id = state.add_task(
+                request.url,
+                request.output_path,
+                ','.join(request.languages),  # 使用format字段存储语言列表
+                task_type="subtitle",
+                subtitle_config=subtitle_config
+            )
+            print(f"Created new subtitle task with ID: {task_id}")
+
+            # 异步执行字幕下载任务
+            print("Creating async task for subtitle download")
+            asyncio.create_task(process_subtitle_task(
+                task_id=task_id,
+                url=request.url,
+                output_path=request.output_path,
+                languages=request.languages,
+                auto_select=request.auto_select,
+                subtitle_format=request.subtitle_format,
+                cookies=request.cookies
+            ))
+            print("Async subtitle task created")
+
+            return {"status": "success", "task_id": task_id}
+        else:
+            # 对于非失败状态的任务，返回现有任务ID
+            return {"status": "success", "task_id": existing_task.id}
+
+    # 创建新字幕任务
+    subtitle_config = {
+        'languages': request.languages,
+        'auto_select': request.auto_select,
+        'subtitle_format': request.subtitle_format
+    }
+
+    task_id = state.add_task(
+        request.url,
+        request.output_path,
+        ','.join(request.languages),  # 使用format字段存储语言列表
+        task_type="subtitle",
+        subtitle_config=subtitle_config
+    )
+    print(f"Created new subtitle task with ID: {task_id}")
+
+    # 异步执行字幕下载任务
+    print("Creating async task for subtitle download")
+    asyncio.create_task(process_subtitle_task(
+        task_id=task_id,
+        url=request.url,
+        output_path=request.output_path,
+        languages=request.languages,
+        auto_select=request.auto_select,
+        subtitle_format=request.subtitle_format,
+        cookies=request.cookies
+    ))
+    print("Async subtitle task created")
 
     return {"status": "success", "task_id": task_id}
 

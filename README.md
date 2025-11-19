@@ -10,6 +10,8 @@ A RESTful API service built with FastAPI and yt-dlp for video information retrie
 
 - 🚀 **Asynchronous Processing**: Download tasks run in the background without blocking the API
 - 📹 **Multiple Format Support**: Download videos in various formats and qualities
+- 📝 **Subtitle Support**: Download subtitles in multiple formats (SRT, VTT, ASS) with language selection
+- 🔄 **Async Subtitle Download**: Background subtitle download with task tracking (NEW)
 - 💾 **Persistent Storage**: Task status and history stored in SQLite database
 - 📋 **Detailed Information**: Get comprehensive video metadata before downloading
 - 🔌 **RESTful API**: Clean and intuitive API endpoints
@@ -327,6 +329,105 @@ GET /download/{task_id}/file
 }
 ```
 
+### 11. List Available Subtitles
+
+**Request:**
+```http
+GET /subtitles?url={video_url}&cookies={cookies_path}
+```
+
+**Parameters:**
+- `url`: Video URL (required)
+- `cookies`: Path to cookies file or browser name (optional)
+
+**Response:**
+```json
+{
+    "status": "success",
+    "data": {
+        "subtitles": {
+            "en": {
+                "name": "English",
+                "code": "en",
+                "formats": ["srt", "vtt"]
+            },
+            "zh": {
+                "name": "Chinese",
+                "code": "zh",
+                "formats": ["srt", "vtt"]
+            }
+        },
+        "automatic_captions": {
+            "en": {
+                "name": "English (auto-generated)",
+                "code": "en",
+                "formats": ["srt", "vtt"]
+            }
+        }
+    }
+}
+```
+
+### 12. Download Subtitle
+
+**Request:**
+```http
+GET /subtitle?url={video_url}&language={lang}&format={format}&cookies={cookies_path}
+```
+
+**Parameters:**
+- `url`: Video URL (required)
+- `language`: Language code (e.g., 'en', 'zh') (required)
+- `format`: Subtitle format (srt, vtt, ass) (optional, defaults to 'srt')
+- `cookies`: Path to cookies file or browser name (optional)
+
+**Response:**
+- Success: Returns subtitle file stream directly
+- Failure: Returns error message
+```json
+{
+    "detail": "error message"
+}
+```
+
+### 13. Async Subtitle Download (Planned Feature)
+
+**Request:**
+```http
+POST /download-subtitles
+```
+
+**Request Body:**
+```json
+{
+    "url": "video_url",
+    "output_path": "./downloads",  // Optional, defaults to "./downloads"
+    "languages": ["en", "zh"],      // List of language codes
+    "auto_select": true,            // Optional, auto-select best subtitles
+    "subtitle_format": "srt",       // Optional, defaults to "srt"
+    "cookies": "cookies/cookies.txt" // Optional, path to cookies file
+}
+```
+
+**Response:**
+```json
+{
+    "status": "success",
+    "task_id": "task_id"
+}
+```
+
+**Usage Example:**
+```bash
+curl -X POST "http://localhost:8000/download-subtitles" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "url": "https://www.youtube.com/watch?v=VIDEO_ID",
+       "languages": ["en", "zh"],
+       "auto_select": true
+     }'
+```
+
 ## Cookie Authentication Guide
 
 ### Why Use Cookie Authentication?
@@ -482,22 +583,79 @@ class YouTubeDownloaderClient:
             "format": format,
             "cookies": cookies_path
         }
-        
+
         response = requests.post(f"{self.base_url}/download", json=payload)
         response.raise_for_status()
         task_id = response.json()['task_id']
-        
+
         # Wait for completion
         while True:
             status_response = requests.get(f"{self.base_url}/task/{task_id}")
             status_data = status_response.json()['data']
             status = status_data['status']
-            
+
             if status == 'completed':
                 return status_data
             elif status == 'failed':
                 raise Exception(f"Download failed: {status_data.get('error', 'Unknown error')}")
-            
+
+            time.sleep(2)
+
+    def get_available_subtitles(self, url, cookies_path=None):
+        """Get available subtitles for a video"""
+        params = {"url": url}
+        if cookies_path:
+            params["cookies"] = cookies_path
+
+        response = requests.get(f"{self.base_url}/subtitles", params=params)
+        response.raise_for_status()
+        return response.json()['data']
+
+    def download_subtitle(self, url, language="en", format="srt", cookies_path=None):
+        """Download subtitle for a video"""
+        params = {
+            "url": url,
+            "language": language,
+            "format": format
+        }
+        if cookies_path:
+            params["cookies"] = cookies_path
+
+        response = requests.get(f"{self.base_url}/subtitle", params=params)
+        response.raise_for_status()
+        return response.content
+
+    def download_subtitles_async(self, url, languages=None, auto_select=True,
+                                format="srt", output_path="./downloads", cookies_path=None):
+        """Download subtitles asynchronously with task tracking"""
+        if languages is None:
+            languages = ["en"]
+
+        payload = {
+            "url": url,
+            "languages": languages,
+            "auto_select": auto_select,
+            "subtitle_format": format,
+            "output_path": output_path
+        }
+        if cookies_path:
+            payload["cookies"] = cookies_path
+
+        response = requests.post(f"{self.base_url}/download-subtitles", json=payload)
+        response.raise_for_status()
+        task_id = response.json()['task_id']
+
+        # Wait for completion
+        while True:
+            status_response = requests.get(f"{self.base_url}/task/{task_id}")
+            status_data = status_response.json()['data']
+            status = status_data['status']
+
+            if status == 'completed':
+                return status_data
+            elif status == 'failed':
+                raise Exception(f"Subtitle download failed: {status_data.get('error', 'Unknown error')}")
+
             time.sleep(2)
 
 # Usage
@@ -509,6 +667,29 @@ client.upload_cookies("cookies.txt")
 # Download video
 result = client.download_video("https://www.youtube.com/watch?v=VIDEO_ID")
 print("Download completed:", result)
+
+# Get available subtitles
+subtitles = client.get_available_subtitles("https://www.youtube.com/watch?v=VIDEO_ID")
+print("Available subtitles:", subtitles)
+
+# Download single subtitle
+subtitle_content = client.download_subtitle(
+    "https://www.youtube.com/watch?v=VIDEO_ID",
+    language="en",
+    format="srt"
+)
+with open("subtitle.srt", "wb") as f:
+    f.write(subtitle_content)
+print("Subtitle downloaded: subtitle.srt")
+
+# Download subtitles asynchronously
+async_result = client.download_subtitles_async(
+    "https://www.youtube.com/watch?v=VIDEO_ID",
+    languages=["en", "zh", "es"],
+    auto_select=True,
+    format="srt"
+)
+print("Async subtitle download completed:", async_result)
 ```
 
 ### Important Notes
@@ -583,8 +764,10 @@ The project includes a user-friendly Gradio web interface that provides easy acc
 
 ### Features
 - **Video Download**: Submit download tasks with format selection
+- **Subtitle Download**: Download subtitles in multiple languages and formats
 - **Video Information**: View video metadata (title, duration, uploader)
 - **Format Selection**: Browse and select from available video formats
+- **Subtitle Selection**: Choose from available subtitle languages and formats
 - **Real-time Status**: Monitor download progress with live updates
 
 ### Access
@@ -595,8 +778,9 @@ The project includes a user-friendly Gradio web interface that provides easy acc
 1. Open the web interface in your browser
 2. Navigate between tabs for different functions
 3. Enter video URLs and select desired formats
-4. Monitor download progress in real-time
-5. Download completed videos directly through the interface
+4. For subtitles: choose languages and formats (SRT, VTT, ASS)
+5. Monitor download progress in real-time
+6. Download completed videos and subtitles directly through the interface
 
 ## Architecture Overview
 

@@ -10,9 +10,14 @@
 
 - 异步下载处理
 - 支持多种视频格式
+- 字幕下载功能（支持多语言和多格式）
+- 异步字幕下载与任务跟踪（新功能）
 - 任务状态持久化存储
 - 提供详细的视频信息查询
 - RESTful API 设计
+- Cookie认证支持
+- Web界面操作
+- Docker容器化部署
 
 ## 安装要求
 
@@ -160,6 +165,105 @@ GET /download/{task_id}/file
 {
     "detail": "错误信息"
 }
+```
+
+### 7. 获取可用字幕语言
+
+**请求：**
+```http
+GET /subtitles?url={video_url}&cookies={cookies_path}
+```
+
+**参数：**
+- `url`: 视频URL（必需）
+- `cookies`: Cookie文件路径或浏览器名称（可选）
+
+**返回：**
+```json
+{
+    "status": "success",
+    "data": {
+        "subtitles": {
+            "en": {
+                "name": "English",
+                "code": "en",
+                "formats": ["srt", "vtt"]
+            },
+            "zh": {
+                "name": "Chinese",
+                "code": "zh",
+                "formats": ["srt", "vtt"]
+            }
+        },
+        "automatic_captions": {
+            "en": {
+                "name": "English (自动生成)",
+                "code": "en",
+                "formats": ["srt", "vtt"]
+            }
+        }
+    }
+}
+```
+
+### 8. 下载字幕文件
+
+**请求：**
+```http
+GET /subtitle?url={video_url}&language={lang}&format={format}&cookies={cookies_path}
+```
+
+**参数：**
+- `url`: 视频URL（必需）
+- `language`: 语言代码（如 'en', 'zh'）（必需）
+- `format`: 字幕格式（srt, vtt, ass）（可选，默认为'srt'）
+- `cookies`: Cookie文件路径或浏览器名称（可选）
+
+**返回：**
+- 成功：直接返回字幕文件流
+- 失败：返回错误信息
+```json
+{
+    "detail": "错误信息"
+}
+```
+
+### 9. 异步字幕下载（规划中的功能）
+
+**请求：**
+```http
+POST /download-subtitles
+```
+
+**请求体：**
+```json
+{
+    "url": "视频URL",
+    "output_path": "./downloads",  // 可选，默认为 "./downloads"
+    "languages": ["en", "zh"],      // 语言代码列表
+    "auto_select": true,            // 可选，自动选择最佳字幕
+    "subtitle_format": "srt",       // 可选，默认为 "srt"
+    "cookies": "cookies/cookies.txt" // 可选，Cookie文件路径
+}
+```
+
+**返回：**
+```json
+{
+    "status": "success",
+    "task_id": "任务ID"
+}
+```
+
+**使用示例：**
+```bash
+curl -X POST "http://localhost:8000/download-subtitles" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "url": "https://www.youtube.com/watch?v=VIDEO_ID",
+       "languages": ["en", "zh"],
+       "auto_select": true
+     }'
 ```
 
 ## 错误处理

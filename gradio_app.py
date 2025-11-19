@@ -199,10 +199,116 @@ def list_formats(url, cookies=None):
         logger.error(error_msg)
         return error_msg
 
+def download_subtitles(url, languages, auto_select, subtitle_format, output_path="./downloads", cookies=None):
+    """提交字幕下载任务"""
+    logger.info(f"开始下载字幕: {url}, 语言: {languages}")
+    try:
+        # 准备请求数据
+        payload = {
+            "url": url,
+            "languages": languages,
+            "auto_select": auto_select,
+            "subtitle_format": subtitle_format,
+            "output_path": output_path
+        }
+
+        # 添加cookies参数（如果提供）
+        if cookies:
+            payload["cookies"] = cookies
+
+        # 发送POST请求到API
+        logger.info(f"发送字幕下载请求到: {API_BASE_URL}/download-subtitles")
+        response = requests.post(f"{API_BASE_URL}/download-subtitles", json=payload, timeout=30)
+        response.raise_for_status()
+
+        # 解析响应
+        result = response.json()
+        task_id = result.get("task_id")
+
+        if not task_id:
+            error_msg = "错误：无法获取任务ID"
+            logger.error(error_msg)
+            return error_msg, None
+
+        logger.info(f"字幕任务ID: {task_id}")
+
+        # 轮询任务状态直到完成
+        status_output = ""
+        max_attempts = 60  # 最多尝试60次（约2分钟）
+        attempt = 0
+
+        while attempt < max_attempts:
+            try:
+                status_response = requests.get(f"{API_BASE_URL}/task/{task_id}", timeout=10)
+                status_response.raise_for_status()
+                status_data = status_response.json()
+
+                task_status = status_data.get("data", {}).get("status", "unknown")
+                status_output += f"字幕任务状态: {task_status}\n"
+                logger.info(f"字幕任务 {task_id} 状态: {task_status}")
+
+                if task_status == "completed":
+                    result_data = status_data.get("data", {}).get("result", {})
+                    total_files = result_data.get("total_files", 0)
+                    downloaded_files = result_data.get("downloaded_files", [])
+
+                    if downloaded_files:
+                        file_list = "\n".join([f"- {f['language']}: {f['path']}" for f in downloaded_files])
+                        success_msg = status_output + f"字幕下载完成！\n下载文件数: {total_files}\n文件列表:\n{file_list}"
+                        logger.info(success_msg)
+                        return success_msg, downloaded_files
+                    else:
+                        error_msg = status_output + "字幕下载完成但没有文件"
+                        logger.warning(error_msg)
+                        return error_msg, None
+
+                elif task_status == "failed":
+                    error = status_data.get("data", {}).get("error", "未知错误")
+                    error_msg = status_output + f"字幕下载失败: {error}"
+                    logger.error(error_msg)
+                    return error_msg, None
+
+                # 等待一段时间后再次检查
+                time.sleep(2)
+                attempt += 1
+            except requests.exceptions.ConnectionError as e:
+                error_msg = f"连接错误: 无法连接到API服务，请检查服务是否运行"
+                logger.error(error_msg)
+                return error_msg, None
+            except requests.exceptions.Timeout as e:
+                error_msg = f"请求超时: {str(e)}"
+                logger.error(error_msg)
+                return error_msg, None
+            except Exception as e:
+                error_msg = f"错误: {str(e)}"
+                logger.error(error_msg)
+                return error_msg, None
+
+        timeout_msg = status_output + "字幕下载超时"
+        logger.warning(timeout_msg)
+        return timeout_msg, None
+
+    except requests.exceptions.ConnectionError as e:
+        error_msg = f"连接错误: 无法连接到API服务，请检查服务是否运行"
+        logger.error(error_msg)
+        return error_msg, None
+    except requests.exceptions.Timeout as e:
+        error_msg = f"请求超时: {str(e)}"
+        logger.error(error_msg)
+        return error_msg, None
+    except requests.exceptions.HTTPError as e:
+        error_msg = f"HTTP错误: {e.response.status_code} - {e.response.text}"
+        logger.error(error_msg)
+        return error_msg, None
+    except Exception as e:
+        error_msg = f"错误: {str(e)}"
+        logger.error(error_msg)
+        return error_msg, None
+
 # Gradio界面
 with gr.Blocks(title="yt-dlp 视频下载器") as demo:
     gr.Markdown("# yt-dlp 视频下载器")
-    gr.Markdown("使用此工具下载YouTube等平台的视频")
+    gr.Markdown("使用此工具下载YouTube等平台的视频和字幕")
     
     # 添加健康检查函数
     def health_check():
@@ -296,6 +402,45 @@ with gr.Blocks(title="yt-dlp 视频下载器") as demo:
             fn=list_formats,
             inputs=[formats_url, formats_cookies],
             outputs=[formats_output]
+        )
+
+    with gr.Tab("下载字幕"):
+        with gr.Row():
+            subtitle_url = gr.Textbox(label="视频URL", placeholder="请输入视频链接")
+        with gr.Row():
+            subtitle_languages = gr.CheckboxGroup(
+                choices=["en", "zh", "es", "fr", "de", "ja", "ko", "ru", "ar", "hi", "pt", "it", "nl", "pl", "sv", "da", "no", "fi"],
+                value=["en"],
+                label="选择字幕语言"
+            )
+        with gr.Row():
+            subtitle_format = gr.Dropdown(
+                choices=["srt", "vtt", "ass", "ssa"],
+                value="srt",
+                label="字幕格式"
+            )
+        with gr.Row():
+            auto_select = gr.Checkbox(
+                label="自动选择最佳字幕（如果指定语言不可用）",
+                value=True
+            )
+        with gr.Row():
+            subtitle_cookies = gr.Textbox(
+                label="Cookies设置",
+                placeholder="输入cookies文件路径或浏览器名称",
+                value=""
+            )
+        with gr.Row():
+            subtitle_output_path = gr.Textbox(label="输出路径", value="./downloads")
+        with gr.Row():
+            subtitle_download_btn = gr.Button("下载字幕")
+        with gr.Row():
+            subtitle_status = gr.Textbox(label="下载状态", interactive=False, lines=10)
+
+        subtitle_download_btn.click(
+            fn=download_subtitles,
+            inputs=[subtitle_url, subtitle_languages, auto_select, subtitle_format, subtitle_output_path, subtitle_cookies],
+            outputs=[subtitle_status]
         )
 
 if __name__ == "__main__":
