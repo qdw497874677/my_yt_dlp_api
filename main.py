@@ -25,6 +25,9 @@ from cookie_manager import (
     refresh_cookies
 )
 
+# 导入调度器管理模块
+from scheduler_manager import scheduler_manager, SchedulerConfig
+
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
@@ -93,6 +96,28 @@ class Task(BaseModel):
     status: str
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+
+# 调度器相关的 Pydantic 模型
+class SchedulerConfigRequest(BaseModel):
+    enabled: Optional[bool] = None
+    cron_expression: Optional[str] = None
+    timezone: Optional[str] = None
+    max_retries: Optional[int] = None
+    retry_delay: Optional[int] = None
+
+class SchedulerStatusResponse(BaseModel):
+    running: bool
+    config: Dict[str, Any]
+    next_run: Optional[str] = None
+
+class UpdateHistoryResponse(BaseModel):
+    id: int
+    timestamp: str
+    old_version: Optional[str] = None
+    new_version: Optional[str] = None
+    status: str
+    error_message: Optional[str] = None
+    retry_count: int
 
 class State:
     def __init__(self):
@@ -1663,6 +1688,186 @@ async def check_ytdlp_update():
         logger.error(f"Check yt-dlp update failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ========== 调度器管理 API ==========
+
+@app.get("/scheduler/status", response_model=SchedulerStatusResponse, response_class=JSONResponse)
+async def get_scheduler_status():
+    """
+    获取调度器状态
+    """
+    try:
+        status = scheduler_manager.get_scheduler_status()
+        return JSONResponse(
+            status_code=200,
+            content=status
+        )
+    except Exception as e:
+        logger.error(f"Get scheduler status failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/scheduler/start", response_class=JSONResponse)
+async def start_scheduler():
+    """
+    启动调度器
+    """
+    try:
+        success = await scheduler_manager.start_scheduler()
+        if success:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "message": "调度器启动成功"
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": "调度器已在运行或启动失败"
+                }
+            )
+    except Exception as e:
+        logger.error(f"Start scheduler failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/scheduler/stop", response_class=JSONResponse)
+async def stop_scheduler():
+    """
+    停止调度器
+    """
+    try:
+        success = await scheduler_manager.stop_scheduler()
+        if success:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "message": "调度器停止成功"
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": "调度器未运行或停止失败"
+                }
+            )
+    except Exception as e:
+        logger.error(f"Stop scheduler failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/scheduler/config", response_class=JSONResponse)
+async def get_scheduler_config():
+    """
+    获取调度器配置
+    """
+    try:
+        config = scheduler_manager.get_config()
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "config": {
+                    "enabled": config.enabled,
+                    "cron_expression": config.cron_expression,
+                    "timezone": config.timezone,
+                    "max_retries": config.max_retries,
+                    "retry_delay": config.retry_delay
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f"Get scheduler config failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/scheduler/config", response_class=JSONResponse)
+async def update_scheduler_config(request: SchedulerConfigRequest):
+    """
+    更新调度器配置
+    """
+    try:
+        current_config = scheduler_manager.get_config()
+
+        # 更新配置（只更新提供的字段）
+        if request.enabled is not None:
+            current_config.enabled = request.enabled
+        if request.cron_expression is not None:
+            current_config.cron_expression = request.cron_expression
+        if request.timezone is not None:
+            current_config.timezone = request.timezone
+        if request.max_retries is not None:
+            current_config.max_retries = request.max_retries
+        if request.retry_delay is not None:
+            current_config.retry_delay = request.retry_delay
+
+        # 保存配置
+        success = scheduler_manager.update_config(current_config)
+        if not success:
+            raise HTTPException(status_code=500, detail="保存配置失败")
+
+        # 如果更新了 cron 表达式且调度器正在运行，重新调度作业
+        if request.cron_expression is not None:
+            await scheduler_manager.update_job_schedule(current_config.cron_expression)
+
+        # 根据是否启用自动更新来启动或停止调度器
+        if request.enabled is not None:
+            if request.enabled:
+                await scheduler_manager.start_scheduler()
+            else:
+                await scheduler_manager.stop_scheduler()
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "message": "配置更新成功",
+                "config": {
+                    "enabled": current_config.enabled,
+                    "cron_expression": current_config.cron_expression,
+                    "timezone": current_config.timezone,
+                    "max_retries": current_config.max_retries,
+                    "retry_delay": current_config.retry_delay
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f"Update scheduler config failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/scheduler/update-history", response_class=JSONResponse)
+async def get_update_history(limit: int = Query(50, ge=1, le=200)):
+    """
+    获取更新历史
+    """
+    try:
+        history = scheduler_manager.get_update_history(limit)
+        history_data = []
+        for record in history:
+            history_data.append({
+                "id": record.id,
+                "timestamp": record.timestamp.isoformat() if record.timestamp else None,
+                "old_version": record.old_version,
+                "new_version": record.new_version,
+                "status": record.status,
+                "error_message": record.error_message,
+                "retry_count": record.retry_count
+            })
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "history": history_data,
+                "total": len(history_data)
+            }
+        )
+    except Exception as e:
+        logger.error(f"Get update history failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 def start_api():
     logger.info("Starting FastAPI server on 0.0.0.0:8000")
@@ -1671,6 +1876,28 @@ def start_api():
     for route in app.routes:
         if hasattr(route, "methods"):
             logger.info(f"  {list(route.methods)[0]} {route.path}")
+
+    # 初始化调度器
+    try:
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # 设置调度器
+        loop.run_until_complete(scheduler_manager.setup_scheduler())
+        logger.info("调度器初始化完成")
+
+        # 如果启用自动更新，启动调度器
+        config = scheduler_manager.get_config()
+        if config.enabled:
+            loop.run_until_complete(scheduler_manager.start_scheduler())
+            logger.info("自动更新调度器已启动")
+        else:
+            logger.info("自动更新已禁用")
+
+    except Exception as e:
+        logger.error(f"初始化调度器失败: {e}")
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
