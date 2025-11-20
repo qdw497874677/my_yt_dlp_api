@@ -606,15 +606,27 @@ if __name__ == "__main__":
     try:
         # 创建界面
         demo = create_gradio_interface()
+        logger.info("Gradio界面创建成功")
 
-        # 启动应用
+        # 启动应用并保持运行
         demo.launch(
             server_name="0.0.0.0",
             server_port=7860,
-            prevent_thread_lock=False  # 在supervisor中不需要prevent_thread_lock
+            prevent_thread_lock=True,  # 在supervisor中需要prevent_thread_lock保持主线程运行
+            show_error=True,
+            quiet=False
         )
         logger.info("Gradio应用启动成功")
 
+        # 保持进程运行，防止退出
+        import time
+        while True:
+            time.sleep(1)
+
     except Exception as e:
         logger.error(f"Gradio应用启动失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # 给进程一些时间来记录错误
+        time.sleep(5)
         raise
