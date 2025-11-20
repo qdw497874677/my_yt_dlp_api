@@ -386,6 +386,121 @@ class AutoCookieManager:
 
         return recommendations
 
+    def get_browser_login_cookies(self) -> Optional[str]:
+        """
+        获取通过浏览器登录提取的最新cookies
+
+        Returns:
+            Optional[str]: 最新的浏览器登录cookies文件路径，如果没有则返回None
+        """
+        try:
+            cookies_dir = Path("./cookies")
+            if not cookies_dir.exists():
+                return None
+
+            # 查找所有浏览器登录的cookies文件
+            browser_cookie_files = []
+            for cookie_file in cookies_dir.glob("youtube_cookies_*.txt"):
+                if cookie_file.is_file():
+                    browser_cookie_files.append(cookie_file)
+
+            if not browser_cookie_files:
+                return None
+
+            # 按修改时间排序，返回最新的
+            latest_cookie = max(browser_cookie_files, key=lambda f: f.stat().st_mtime)
+
+            # 检查文件是否在30分钟内创建的（cookies有效期）
+            import time
+            current_time = time.time()
+            file_age = current_time - latest_cookie.stat().st_mtime
+
+            if file_age > 1800:  # 30分钟
+                logger.info(f"浏览器cookies文件已过期: {latest_cookie}")
+                return None
+
+            logger.info(f"使用浏览器登录cookies: {latest_cookie}")
+            return str(latest_cookie)
+
+        except Exception as e:
+            logger.error(f"获取浏览器登录cookies失败: {e}")
+            return None
+
+    async def get_best_cookie_for_download(self, url: str = None) -> Optional[str]:
+        """
+        获取最佳cookies用于下载，优先级：
+        1. 浏览器登录提取的cookies
+        2. 当前活跃的全局cookies
+        3. 尝试自动检测和刷新
+
+        Args:
+            url: 目标URL，用于判断是否需要YouTube cookies
+
+        Returns:
+            Optional[str]: cookies文件路径
+        """
+        # 首先尝试使用浏览器登录的cookies
+        browser_cookies = self.get_browser_login_cookies()
+        if browser_cookies:
+            # 验证cookies是否仍然有效
+            try:
+                validation = await self.cookie_manager.validate_cookie_file(browser_cookies, detailed=False)
+                if validation.get("valid"):
+                    logger.info("使用浏览器登录的cookies进行下载")
+                    return browser_cookies
+                else:
+                    logger.warning("浏览器登录的cookies已失效")
+            except Exception as e:
+                logger.warning(f"验证浏览器cookies失败: {e}")
+
+        # 回退到原有的全局cookie逻辑
+        active_cookie = self.cookie_manager.get_active_cookie()
+        if active_cookie:
+            try:
+                validation = await self.cookie_manager.validate_active_cookie()
+                if validation.get("valid"):
+                    logger.info("使用全局活跃cookies进行下载")
+                    return active_cookie
+                else:
+                    logger.warning("全局活跃cookies已失效，尝试刷新")
+            except Exception as e:
+                logger.warning(f"验证全局cookies失败: {e}")
+
+        # 尝试刷新cookies
+        try:
+            logger.info("尝试刷新cookies...")
+            refresh_result = await self.cookie_manager.auto_scan_and_validate()
+            if refresh_result.get("best_cookie"):
+                logger.info("刷新cookies成功")
+                return refresh_result["best_cookie"]
+        except Exception as e:
+            logger.error(f"刷新cookies失败: {e}")
+
+        return None
+
+    def add_browser_cookies_preference(self) -> Dict:
+        """
+        添加浏览器cookies的优先使用说明
+
+        Returns:
+            Dict: 包含使用说明的字典
+        """
+        browser_cookies = self.get_browser_login_cookies()
+
+        if browser_cookies:
+            return {
+                "has_browser_cookies": True,
+                "browser_cookies_path": browser_cookies,
+                "recommendation": "✅ 检测到浏览器登录的cookies，将优先使用",
+                "usage": f"下载时自动使用: {browser_cookies}"
+            }
+        else:
+            return {
+                "has_browser_cookies": False,
+                "recommendation": "🔐 建议使用浏览器登录功能获取cookies",
+                "usage": "访问Web界面的'🔐 YouTube登录'标签页获取cookies"
+            }
+
 # 创建全局实例
 auto_cookie_manager = AutoCookieManager()
 

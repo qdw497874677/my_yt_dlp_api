@@ -4,6 +4,8 @@ import os
 import time
 import json
 import logging
+import threading
+from datetime import datetime
 
 # 配置日志
 logging.basicConfig(
@@ -20,6 +22,192 @@ if os.getenv("DOCKER_ENV"):
 
 # 设置环境变量以避免Gradio的API文档错误
 os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
+
+# YouTube登录相关函数
+def start_browser_session():
+    """启动浏览器登录会话"""
+    try:
+        logger.info("启动YouTube浏览器登录会话...")
+        response = requests.post(f"{API_BASE_URL}/browser/session/start", timeout=30)
+        response.raise_for_status()
+        result = response.json()
+
+        if result.get("success"):
+            session_id = result.get("session_id")
+            debug_url = result.get("debug_url")
+            instructions = result.get("instructions")
+
+            message = f"""✅ 浏览器会话已启动！
+
+📍 访问地址: {debug_url}
+📝 会话ID: {session_id}
+
+💡 使用说明:
+{instructions}
+
+⚠️ 重要提示:
+- 请在新打开的浏览器窗口中完成YouTube登录
+- 登录完成后回到本页面点击"提取Cookies"按钮
+- 会话将在30分钟后自动过期"""
+
+            logger.info(f"浏览器会话启动成功: {session_id}")
+            return message, gr.update(visible=True), gr.update(visible=True), session_id
+        else:
+            error_msg = result.get("error", "未知错误")
+            logger.error(f"启动浏览器会话失败: {error_msg}")
+            return f"❌ 启动失败: {error_msg}", gr.update(visible=False), gr.update(visible=False), None
+
+    except requests.exceptions.ConnectionError:
+        error_msg = "❌ 连接失败: 无法连接到API服务，请检查服务是否运行"
+        logger.error(error_msg)
+        return error_msg, gr.update(visible=False), gr.update(visible=False), None
+    except requests.exceptions.Timeout:
+        error_msg = "❌ 请求超时: 启动浏览器会话超时，请重试"
+        logger.error(error_msg)
+        return error_msg, gr.update(visible=False), gr.update(visible=False), None
+    except Exception as e:
+        error_msg = f"❌ 启动失败: {str(e)}"
+        logger.error(error_msg)
+        return error_msg, gr.update(visible=False), gr.update(visible=False), None
+
+def check_session_status(session_id):
+    """检查会话状态"""
+    if not session_id:
+        return "❌ 没有活跃的浏览器会话"
+
+    try:
+        response = requests.get(f"{API_BASE_URL}/browser/session/{session_id}/status", timeout=10)
+        response.raise_for_status()
+        result = response.json()
+
+        if result.get("success"):
+            status = result.get("status")
+            youtube_logged_in = result.get("youtube_logged_in", False)
+            cookies_extracted = result.get("cookies_extracted", False)
+            resource_info = result.get("resource_info", {})
+            error_message = result.get("error_message")
+
+            # 状态图标映射
+            status_icons = {
+                "initializing": "🔄 初始化中",
+                "ready": "🟢 准备就绪",
+                "login_complete": "✅ 登录完成",
+                "extracting": "⏳ 提取Cookies中",
+                "completed": "✨ 完成",
+                "error": "❌ 错误"
+            }
+
+            status_text = status_icons.get(status, f"📋 {status}")
+
+            info_lines = [
+                f"📊 会话状态: {status_text}",
+                f"🔐 YouTube登录: {'✅ 已登录' if youtube_logged_in else '❌ 未登录'}",
+                f"🍪 Cookies提取: {'✅ 已提取' if cookies_extracted else '❌ 未提取'}",
+                f"🆔 会话ID: {session_id}"
+            ]
+
+            if error_message:
+                info_lines.append(f"⚠️ 错误信息: {error_message}")
+
+            # 添加资源使用信息
+            if resource_info:
+                if "memory_mb" in resource_info:
+                    info_lines.append(f"💾 内存使用: {resource_info['memory_mb']:.1f} MB")
+                if "cpu_percent" in resource_info:
+                    info_lines.append(f"🖥️ CPU使用: {resource_info['cpu_percent']:.1f}%")
+
+            # 添加操作建议
+            if status == "ready" and not youtube_logged_in:
+                info_lines.append("\n💡 建议: 请在浏览器中完成YouTube登录")
+            elif status == "login_complete" and not cookies_extracted:
+                info_lines.append("\n💡 建议: 请点击'提取Cookies'按钮")
+            elif status == "completed":
+                info_lines.append("\n✅ 完成: Cookies已成功提取，可以开始下载视频了")
+
+            return "\n".join(info_lines)
+        else:
+            error_msg = result.get("error", "未知错误")
+            return f"❌ 获取状态失败: {error_msg}"
+
+    except Exception as e:
+        return f"❌ 检查状态失败: {str(e)}"
+
+def extract_browser_cookies(session_id):
+    """提取浏览器Cookies"""
+    if not session_id:
+        return "❌ 没有活跃的浏览器会话"
+
+    try:
+        logger.info(f"提取会话 {session_id} 的cookies...")
+        response = requests.post(f"{API_BASE_URL}/browser/session/{session_id}/extract-cookies", timeout=30)
+        response.raise_for_status()
+        result = response.json()
+
+        if result.get("success"):
+            cookie_count = result.get("cookie_count", 0)
+            net_cookies = result.get("netscape_cookies", "")
+
+            # 保存cookies到文件
+            cookie_filename = f"youtube_cookies_{session_id[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            cookie_path = os.path.join("./cookies", cookie_filename)
+
+            # 确保cookies目录存在
+            os.makedirs("./cookies", exist_ok=True)
+
+            with open(cookie_path, 'w', encoding='utf-8') as f:
+                f.write(net_cookies)
+
+            success_message = f"""🎉 Cookies提取成功！
+
+📊 提取统计:
+- Cookie数量: {cookie_count}
+- 保存位置: {cookie_path}
+- 文件大小: {len(net_cookies)} 字符
+
+✨ 使用方法:
+1. 在下载视频时，在"Cookies设置"字段中填入: {cookie_path}
+2. 或者选择"使用浏览器提取的Cookies"选项（如果可用）
+
+🔄 下次下载:
+- Cookies将保存30分钟
+- 过期后请重新提取
+
+💡 提示: 现在你可以下载需要登录的YouTube视频了！"""
+
+            logger.info(f"成功提取 {cookie_count} 个cookies到 {cookie_path}")
+            return success_message
+        else:
+            error_msg = result.get("error", "未知错误")
+            logger.error(f"提取cookies失败: {error_msg}")
+            return f"❌ 提取失败: {error_msg}"
+
+    except Exception as e:
+        error_msg = f"❌ 提取失败: {str(e)}"
+        logger.error(error_msg)
+        return error_msg
+
+def cleanup_session(session_id):
+    """清理会话"""
+    if not session_id:
+        return "✅ 没有需要清理的会话"
+
+    try:
+        logger.info(f"清理会话 {session_id}...")
+        response = requests.delete(f"{API_BASE_URL}/browser/session/{session_id}", timeout=10)
+        response.raise_for_status()
+        result = response.json()
+
+        if result.get("success"):
+            message = "✅ 会话已清理，浏览器窗口已关闭"
+            logger.info(message)
+            return message
+        else:
+            error_msg = result.get("error", "未知错误")
+            return f"⚠️ 清理部分失败: {error_msg}"
+
+    except Exception as e:
+        logger.warning(f"清理会话时出错: {e}")
+        return "✅ 会话引用已清理（可能有部分资源未完全释放）"
 
 def download_video(url, format_choice, output_path="./downloads", cookies=None):
     """提交下载任务"""
@@ -324,6 +512,9 @@ with gr.Blocks(title="yt-dlp 视频下载器") as demo:
     
     # 在界面顶部添加健康检查显示
     health_status = gr.Textbox(label="服务状态", value=health_check())
+
+    # YouTube登录相关变量
+    current_session_id = None
     
     with gr.Tab("下载视频"):
         with gr.Row():
@@ -441,6 +632,90 @@ with gr.Blocks(title="yt-dlp 视频下载器") as demo:
             fn=download_subtitles,
             inputs=[subtitle_url, subtitle_languages, auto_select, subtitle_format, subtitle_output_path, subtitle_cookies],
             outputs=[subtitle_status]
+        )
+
+    with gr.Tab("🔐 YouTube登录"):
+        gr.Markdown("### 🔐 YouTube浏览器登录获取Cookies")
+        gr.Markdown("通过系统启动的浏览器安全登录YouTube，自动提取cookies用于视频下载。")
+
+        with gr.Row():
+            start_session_btn = gr.Button("🚀 启动浏览器登录", variant="primary", size="lg")
+
+        with gr.Row():
+            login_status = gr.Textbox(
+                label="📊 登录状态",
+                interactive=False,
+                lines=8,
+                placeholder="等待启动浏览器会话..."
+            )
+
+        # 隐藏的会话ID存储
+        session_id_hidden = gr.Textbox(visible=False, label="Session ID")
+
+        # 会话控制按钮区域（初始隐藏）
+        with gr.Row() as session_controls:
+            check_status_btn = gr.Button("🔄 刷新状态", variant="secondary")
+            extract_cookies_btn = gr.Button("🍪 提取Cookies", variant="primary")
+            cleanup_btn = gr.Button("🧹 清理会话", variant="stop")
+
+        # 会话统计信息
+        with gr.Row():
+            cookie_result = gr.Textbox(
+                label="🎉 提取结果",
+                interactive=False,
+                lines=12,
+                placeholder="Cookies提取结果将显示在这里..."
+            )
+
+        # 帮助信息
+        with gr.Accordion("📖 使用说明", open=False):
+            gr.Markdown("""
+            ### 🚀 使用步骤
+
+            1. **启动浏览器**: 点击"启动浏览器登录"按钮
+            2. **访问链接**: 在提供的URL中完成YouTube登录
+            3. **检查状态**: 点击"刷新状态"查看登录进度
+            4. **提取Cookies**: 登录成功后点击"提取Cookies"
+            5. **开始下载**: 使用提取的cookies下载视频
+
+            ### ⚠️ 注意事项
+
+            - 浏览器会话将在30分钟后自动过期
+            - 支持所有YouTube登录方式（包括2FA）
+            - Cookies将保存在本地，不会传输密码
+            - 每次只能有一个活跃会话
+
+            ### 🔧 故障排除
+
+            - **启动失败**: 检查Chrome浏览器是否安装
+            - **登录失败**: 确保网络连接正常
+            - **提取失败**: 确保已完成YouTube登录
+            """)
+
+        # 绑定事件
+        session_controls.visible = False  # 初始隐藏
+
+        start_session_btn.click(
+            fn=start_browser_session,
+            outputs=[login_status, session_controls, session_id_hidden]
+        )
+
+        check_status_btn.click(
+            fn=check_session_status,
+            inputs=[session_id_hidden],
+            outputs=[login_status]
+        )
+
+        extract_cookies_btn.click(
+            fn=extract_browser_cookies,
+            inputs=[session_id_hidden],
+            outputs=[cookie_result]
+        )
+
+        cleanup_btn.click(
+            fn=cleanup_session,
+            inputs=[session_id_hidden],
+            outputs=[cookie_result]
         )
 
 if __name__ == "__main__":

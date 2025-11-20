@@ -78,3 +78,26 @@ TBD - created by archiving change add-ytdlp-scheduled-update. Update Purpose aft
 - **WHEN** 系统检测到连续更新失败
 - **THEN** 系统记录警告信息并可能暂停自动更新
 
+### Requirement: 任务类型支持
+系统 SHALL 支持多种任务类型，包括视频下载和字幕下载。
+
+#### Scenario: 任务类型区分
+- **WHEN** 创建新任务时
+- **THEN** 系统根据请求类型设置 task_type 字段
+- **AND** task_type 支持 'video' 和 'subtitle' 类型
+- **AND** 不同类型任务使用相应的处理逻辑
+
+#### Scenario: 任务列表过滤
+- **WHEN** 查询任务列表时
+- **THEN** 用户可按任务类型过滤任务
+- **AND** 系统支持按 task_type、status 等字段筛选
+
+### Requirement: 文件下载管理
+文件下载接口 SHALL 支持不同类型任务的文件下载。
+
+#### Scenario: 多文件任务下载
+- **WHEN** 任务包含多个文件（如批量字幕）
+- **THEN** GET /download/{task_id}/file 返回主要文件
+- **AND** GET /download/{task_id}/files 返回所有文件列表
+- **AND** GET /download/{task_id}/archive 返回包含所有文件的ZIP包
+

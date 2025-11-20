@@ -27,3 +27,7 @@ aiohttp==3.11.12
 # Scheduler dependencies
 apscheduler==3.10.4
 sqlalchemy==2.0.36
+
+# Browser automation dependencies
+selenium==4.27.1
+undetected-chromedriver==3.5.4

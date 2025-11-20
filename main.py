@@ -28,6 +28,9 @@ from cookie_manager import (
 # 导入调度器管理模块
 from scheduler_manager import scheduler_manager, SchedulerConfig
 
+# 导入浏览器会话管理模块
+from browser_session_manager import browser_session_manager
+
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
@@ -367,7 +370,16 @@ class State:
             return {"success": True, "message": "Cookie已初始化"}
 
     async def get_cookies_for_download(self, url: str) -> Optional[str]:
-        """获取下载用的cookies"""
+        """获取下载用的cookies（智能选择策略）"""
+        # 优先使用增强的cookie管理器的智能选择策略
+        try:
+            best_cookie = await auto_cookie_manager.get_best_cookie_for_download(url)
+            if best_cookie:
+                return best_cookie
+        except Exception as e:
+            logger.warning(f"智能cookie选择失败，回退到传统方式: {e}")
+
+        # 回退到原有的逻辑
         if not self.cookie_initialized:
             await self.initialize_cookies()
 
@@ -2172,6 +2184,114 @@ async def get_update_history(limit: int = Query(50, ge=1, le=200)):
         )
     except Exception as e:
         logger.error(f"Get update history failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Browser Session Management APIs ====================
+
+@app.post("/browser/session/start", response_class=JSONResponse)
+async def start_browser_session():
+    """
+    启动新的浏览器会话用于YouTube登录
+    """
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, browser_session_manager.create_session
+        )
+        return JSONResponse(status_code=200, content=result)
+    except Exception as e:
+        logger.error(f"Start browser session failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/browser/session/{session_id}/status", response_class=JSONResponse)
+async def get_session_status(session_id: str):
+    """
+    获取浏览器会话状态
+    """
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, browser_session_manager.get_session_status, session_id
+        )
+        return JSONResponse(status_code=200, content=result)
+    except Exception as e:
+        logger.error(f"Get session status failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/browser/session/{session_id}/extract-cookies", response_class=JSONResponse)
+async def extract_session_cookies(session_id: str):
+    """
+    提取浏览器会话中的YouTube cookies
+    """
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, browser_session_manager.extract_cookies, session_id
+        )
+        return JSONResponse(status_code=200, content=result)
+    except Exception as e:
+        logger.error(f"Extract cookies failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/browser/session/{session_id}", response_class=JSONResponse)
+async def cleanup_browser_session(session_id: str):
+    """
+    清理浏览器会话资源
+    """
+    try:
+        success = await asyncio.get_event_loop().run_in_executor(
+            None, browser_session_manager.cleanup_session, session_id
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": success,
+                "message": "会话清理成功" if success else "会话不存在或清理失败"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Cleanup session failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/browser/sessions", response_class=JSONResponse)
+async def get_all_sessions():
+    """
+    获取所有活跃的浏览器会话
+    """
+    try:
+        sessions = await asyncio.get_event_loop().run_in_executor(
+            None, browser_session_manager.get_all_sessions
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "sessions": sessions,
+                "total": len(sessions)
+            }
+        )
+    except Exception as e:
+        logger.error(f"Get all sessions failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/cookies/browser-preference", response_class=JSONResponse)
+async def get_browser_cookies_preference():
+    """
+    获取浏览器登录cookies的偏好设置和状态
+    """
+    try:
+        preference = await asyncio.get_event_loop().run_in_executor(
+            None, auto_cookie_manager.add_browser_cookies_preference
+        )
+        return JSONResponse(status_code=200, content={
+            "success": True,
+            "browser_preference": preference
+        })
+    except Exception as e:
+        logger.error(f"Get browser cookies preference failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
