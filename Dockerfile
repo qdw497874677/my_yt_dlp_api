@@ -1,4 +1,4 @@
-FROM python:3.9
+FROM python:3.10
 
 # 设置环境变量
 ENV PYTHONUNBUFFERED=1
@@ -23,7 +23,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 创建必要的目录
-RUN mkdir -p /app/downloads /app/data /app/cookies
+RUN mkdir -p /app/downloads /app/data /app/cookies /var/log/supervisor
 
 # 复制应用代码
 COPY . .
@@ -36,5 +36,5 @@ RUN chmod +x /app/start.sh
 
 EXPOSE 8000 7860
 
-# 使用supervisor启动FastAPI和Gradio服务
+# 启动supervisor来管理FastAPI和Gradio服务
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
