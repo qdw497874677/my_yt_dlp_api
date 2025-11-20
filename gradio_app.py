@@ -209,6 +209,15 @@ def cleanup_session(session_id):
         logger.warning(f"清理会话时出错: {e}")
         return "✅ 会话引用已清理（可能有部分资源未完全释放）"
 
+# Alias functions to match validation expectations
+def get_browser_session_status(session_id):
+    """获取浏览器会话状态（别名函数）"""
+    return check_session_status(session_id)
+
+def cleanup_browser_session(session_id):
+    """清理浏览器会话（别名函数）"""
+    return cleanup_session(session_id)
+
 def download_video(url, format_choice, output_path="./downloads", cookies=None):
     """提交下载任务"""
     logger.info(f"开始下载视频: {url}")
