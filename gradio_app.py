@@ -1,29 +1,24 @@
+#!/usr/bin/env python3
+"""
+yt-dlp API - Gradio界面应用
+提供用户友好的Web界面，包括YouTube浏览器登录功能
+"""
+
 import gradio as gr
 import requests
 import os
-import time
 import json
-import logging
-import threading
+import uuid
 from datetime import datetime
+import logging
 
 # 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# API配置
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
-# 在Docker容器中，使用容器服务名
-if os.getenv("DOCKER_ENV"):
-    API_BASE_URL = "http://yt-dlp-api:8000"
+# API基础URL - 自动检测是否在Docker环境中
+API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:8000')
 
-# 设置环境变量以避免Gradio的API文档错误
-os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
-
-# YouTube登录相关函数
 def start_browser_session():
     """启动浏览器登录会话"""
     try:
@@ -34,103 +29,81 @@ def start_browser_session():
 
         if result.get("success"):
             session_id = result.get("session_id")
+            debug_port = result.get("debug_port")
             debug_url = result.get("debug_url")
-            instructions = result.get("instructions")
 
-            message = f"""✅ 浏览器会话已启动！
+            message = f"""✅ 浏览器会话已启动
 
-📍 访问地址: {debug_url}
-📝 会话ID: {session_id}
+📋 会话信息:
+- 会话ID: {session_id}
+- 调试端口: {debug_port}
+- 访问地址: {debug_url}
 
-💡 使用说明:
-{instructions}
+📝 使用说明:
+1. 点击上面的访问地址或直接访问 {debug_url}
+2. 在打开的浏览器中访问 youtube.com 并完成登录
+3. 登录成功后，点击"检查登录状态"验证
+4. 最后点击"提取Cookies"保存登录状态
 
-⚠️ 重要提示:
-- 请在新打开的浏览器窗口中完成YouTube登录
-- 登录完成后回到本页面点击"提取Cookies"按钮
-- 会话将在30分钟后自动过期"""
-
+⏰ 会话将在30分钟后自动超时
+"""
             logger.info(f"浏览器会话启动成功: {session_id}")
-            return message, gr.update(visible=True), gr.update(visible=True), session_id
+            return message, gr.update(visible=True), session_id
         else:
             error_msg = result.get("error", "未知错误")
             logger.error(f"启动浏览器会话失败: {error_msg}")
-            return f"❌ 启动失败: {error_msg}", gr.update(visible=False), gr.update(visible=False), None
+            return f"❌ 启动失败: {error_msg}", gr.update(visible=False), None
 
-    except requests.exceptions.ConnectionError:
-        error_msg = "❌ 连接失败: 无法连接到API服务，请检查服务是否运行"
-        logger.error(error_msg)
-        return error_msg, gr.update(visible=False), gr.update(visible=False), None
     except requests.exceptions.Timeout:
-        error_msg = "❌ 请求超时: 启动浏览器会话超时，请重试"
+        error_msg = "❌ 启动超时，请稍后重试"
         logger.error(error_msg)
-        return error_msg, gr.update(visible=False), gr.update(visible=False), None
+        return error_msg, gr.update(visible=False), None
+    except requests.exceptions.ConnectionError:
+        error_msg = "❌ 无法连接到API服务，请确保后端服务正在运行"
+        logger.error(error_msg)
+        return error_msg, gr.update(visible=False), None
     except Exception as e:
         error_msg = f"❌ 启动失败: {str(e)}"
         logger.error(error_msg)
-        return error_msg, gr.update(visible=False), gr.update(visible=False), None
+        return error_msg, gr.update(visible=False), None
 
 def check_session_status(session_id):
-    """检查会话状态"""
+    """检查浏览器会话状态"""
     if not session_id:
         return "❌ 没有活跃的浏览器会话"
 
     try:
+        logger.info(f"检查会话状态: {session_id}")
         response = requests.get(f"{API_BASE_URL}/browser/session/{session_id}/status", timeout=10)
         response.raise_for_status()
         result = response.json()
 
         if result.get("success"):
-            status = result.get("status")
-            youtube_logged_in = result.get("youtube_logged_in", False)
-            cookies_extracted = result.get("cookies_extracted", False)
-            resource_info = result.get("resource_info", {})
-            error_message = result.get("error_message")
+            session_data = result.get("session", {})
+            status = session_data.get("status", "未知")
+            youtube_logged_in = session_data.get("youtube_logged_in", False)
+            created_at = session_data.get("created_at", "")
+            last_activity = session_data.get("last_activity", "")
 
-            # 状态图标映射
-            status_icons = {
-                "initializing": "🔄 初始化中",
-                "ready": "🟢 准备就绪",
-                "login_complete": "✅ 登录完成",
-                "extracting": "⏳ 提取Cookies中",
-                "completed": "✨ 完成",
-                "error": "❌ 错误"
-            }
+            status_text = f"""📊 会话状态: {status}
+🔐 YouTube登录: {'✅ 已登录' if youtube_logged_in else '❌ 未登录'}
+🕐 创建时间: {created_at}
+🔄 最后活动: {last_activity}"""
 
-            status_text = status_icons.get(status, f"📋 {status}")
-
-            info_lines = [
-                f"📊 会话状态: {status_text}",
-                f"🔐 YouTube登录: {'✅ 已登录' if youtube_logged_in else '❌ 未登录'}",
-                f"🍪 Cookies提取: {'✅ 已提取' if cookies_extracted else '❌ 未提取'}",
-                f"🆔 会话ID: {session_id}"
-            ]
-
-            if error_message:
-                info_lines.append(f"⚠️ 错误信息: {error_message}")
-
-            # 添加资源使用信息
-            if resource_info:
-                if "memory_mb" in resource_info:
-                    info_lines.append(f"💾 内存使用: {resource_info['memory_mb']:.1f} MB")
-                if "cpu_percent" in resource_info:
-                    info_lines.append(f"🖥️ CPU使用: {resource_info['cpu_percent']:.1f}%")
-
-            # 添加操作建议
-            if status == "ready" and not youtube_logged_in:
-                info_lines.append("\n💡 建议: 请在浏览器中完成YouTube登录")
-            elif status == "login_complete" and not cookies_extracted:
-                info_lines.append("\n💡 建议: 请点击'提取Cookies'按钮")
-            elif status == "completed":
-                info_lines.append("\n✅ 完成: Cookies已成功提取，可以开始下载视频了")
-
-            return "\n".join(info_lines)
+            if youtube_logged_in:
+                status_text += "\n\n🎉 检测到YouTube登录状态！现在可以提取Cookies了。"
+                return status_text
+            else:
+                status_text += "\n\n⚠️ 尚未检测到YouTube登录，请确保已在浏览器中完成YouTube登录。"
+                return status_text
         else:
             error_msg = result.get("error", "未知错误")
-            return f"❌ 获取状态失败: {error_msg}"
+            return f"❌ 状态检查失败: {error_msg}"
 
     except Exception as e:
-        return f"❌ 检查状态失败: {str(e)}"
+        error_msg = f"❌ 状态检查失败: {str(e)}"
+        logger.error(error_msg)
+        return error_msg
 
 def extract_browser_cookies(session_id):
     """提取浏览器Cookies"""
@@ -154,28 +127,20 @@ def extract_browser_cookies(session_id):
             # 确保cookies目录存在
             os.makedirs("./cookies", exist_ok=True)
 
-            with open(cookie_path, 'w', encoding='utf-8') as f:
+            with open(cookie_path, 'w') as f:
                 f.write(net_cookies)
 
-            success_message = f"""🎉 Cookies提取成功！
+            message = f"""✅ Cookies提取成功！
 
-📊 提取统计:
+📋 提取信息:
 - Cookie数量: {cookie_count}
-- 保存位置: {cookie_path}
-- 文件大小: {len(net_cookies)} 字符
+- 保存文件: {cookie_filename}
+- 文件路径: {cookie_path}
 
-✨ 使用方法:
-1. 在下载视频时，在"Cookies设置"字段中填入: {cookie_path}
-2. 或者选择"使用浏览器提取的Cookies"选项（如果可用）
-
-🔄 下次下载:
-- Cookies将保存30分钟
-- 过期后请重新提取
-
-💡 提示: 现在你可以下载需要登录的YouTube视频了！"""
-
+🎉 系统将自动使用这些cookies进行视频下载
+"""
             logger.info(f"成功提取 {cookie_count} 个cookies到 {cookie_path}")
-            return success_message
+            return message
         else:
             error_msg = result.get("error", "未知错误")
             logger.error(f"提取cookies失败: {error_msg}")
@@ -228,522 +193,333 @@ def download_video(url, format_choice, output_path="./downloads", cookies=None):
             "output_path": output_path,
             "format": format_choice
         }
-        
+
         # 添加cookies参数（如果提供）
         if cookies:
             payload["cookies"] = cookies
-        
+
         # 发送POST请求到API
         logger.info(f"发送下载请求到: {API_BASE_URL}/download")
         response = requests.post(f"{API_BASE_URL}/download", json=payload, timeout=30)
+
+        if response.status_code == 200:
+            result = response.json()
+            task_id = result.get("task_id")
+            logger.info(f"下载任务已提交，任务ID: {task_id}")
+            return f"✅ 下载任务已提交！\n任务ID: {task_id}\n请使用任务ID查询下载进度。", task_id
+        else:
+            error_detail = response.text
+            logger.error(f"下载请求失败: {response.status_code} - {error_detail}")
+            return f"❌ 下载请求失败: {response.status_code}\n{error_detail}", None
+
+    except requests.exceptions.Timeout:
+        error_msg = "❌ 请求超时，请检查网络连接或API服务状态"
+        logger.error(error_msg)
+        return error_msg, None
+    except requests.exceptions.ConnectionError:
+        error_msg = "❌ 无法连接到API服务，请确保后端服务正在运行"
+        logger.error(error_msg)
+        return error_msg, None
+    except Exception as e:
+        error_msg = f"❌ 下载请求失败: {str(e)}"
+        logger.error(error_msg)
+        return error_msg, None
+
+def check_task_status(task_id):
+    """检查任务状态"""
+    if not task_id:
+        return "❌ 请提供任务ID", None
+
+    try:
+        logger.info(f"查询任务状态: {task_id}")
+        response = requests.get(f"{API_BASE_URL}/task/{task_id}", timeout=10)
         response.raise_for_status()
-        
-        # 解析响应
+
         result = response.json()
-        task_id = result.get("task_id")
-        
-        if not task_id:
-            error_msg = "错误：无法获取任务ID"
-            logger.error(error_msg)
-            return error_msg, None
-        
-        logger.info(f"任务ID: {task_id}")
-        
-        # 轮询任务状态直到完成
-        status_output = ""
-        max_attempts = 30  # 最多尝试30次（约1分钟）
-        attempt = 0
-        
-        while attempt < max_attempts:
-            try:
-                status_response = requests.get(f"{API_BASE_URL}/task/{task_id}", timeout=10)
-                status_response.raise_for_status()
-                status_data = status_response.json()
-                
-                task_status = status_data.get("data", {}).get("status", "unknown")
-                status_output += f"任务状态: {task_status}\n"
-                logger.info(f"任务 {task_id} 状态: {task_status}")
-                
-                if task_status == "completed":
-                    # 获取下载文件
-                    logger.info(f"下载完成，获取文件: {API_BASE_URL}/download/{task_id}/file")
-                    file_response = requests.get(f"{API_BASE_URL}/download/{task_id}/file", timeout=30)
-                    if file_response.status_code == 200:
-                        # 保存文件
-                        filename = f"downloaded_video_{task_id}.mp4"
-                        with open(filename, "wb") as f:
-                            f.write(file_response.content)
-                        success_msg = status_output + "下载完成！"
-                        logger.info(success_msg)
-                        return success_msg, filename
-                    else:
-                        error_msg = status_output + f"错误：无法下载文件 (状态码: {file_response.status_code})"
-                        logger.error(error_msg)
-                        return error_msg, None
-                elif task_status == "failed":
-                    error = status_data.get("data", {}).get("error", "未知错误")
-                    error_msg = status_output + f"下载失败: {error}"
-                    logger.error(error_msg)
-                    return error_msg, None
-                
-                # 等待一段时间后再次检查
-                time.sleep(2)
-                attempt += 1
-            except requests.exceptions.ConnectionError as e:
-                error_msg = f"连接错误: 无法连接到API服务，请检查服务是否运行"
-                logger.error(error_msg)
-                return error_msg, None
-            except requests.exceptions.Timeout as e:
-                error_msg = f"请求超时: {str(e)}"
-                logger.error(error_msg)
-                # 继续重试而不是直接返回错误
-                time.sleep(2)
-                attempt += 1
-                continue
-                
-        # 超时处理
-        timeout_msg = status_output + "下载超时，请稍后查看任务状态"
-        logger.warning(timeout_msg)
-        return timeout_msg, None
-            
-    except requests.exceptions.ConnectionError as e:
-        error_msg = f"连接错误: 无法连接到API服务，请检查服务是否运行"
-        logger.error(error_msg)
-        return error_msg, None
-    except requests.exceptions.Timeout as e:
-        error_msg = f"请求超时: {str(e)}"
-        logger.error(error_msg)
-        return error_msg, None
-    except Exception as e:
-        error_msg = f"错误: {str(e)}"
-        logger.error(error_msg)
-        return error_msg, None
+        status = result.get("status", "未知")
+        progress = result.get("progress", {})
 
-def get_video_info(url, cookies=None):
-    """获取视频信息"""
-    logger.info(f"获取视频信息: {url}")
-    try:
-        params = {"url": url}
-        if cookies:
-            params["cookies"] = cookies
-        response = requests.get(f"{API_BASE_URL}/info", params=params, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        
-        info = data.get("data", {})
-        title = info.get("title", "未知标题")
-        duration = info.get("duration", "未知时长")
-        uploader = info.get("uploader", "未知上传者")
-        
-        # 格式化时长
-        if isinstance(duration, (int, float)):
-            minutes = int(duration // 60)
-            seconds = int(duration % 60)
-            duration = f"{minutes}分{seconds}秒"
-        
-        result = f"标题: {title}\n时长: {duration}\n上传者: {uploader}"
-        logger.info(f"获取视频信息成功: {title}")
-        return result
-    except requests.exceptions.ConnectionError as e:
-        error_msg = "连接错误: 无法连接到API服务，请检查服务是否运行"
-        logger.error(error_msg)
-        return error_msg
-    except requests.exceptions.Timeout as e:
-        error_msg = f"请求超时: {str(e)}"
-        logger.error(error_msg)
-        return error_msg
-    except Exception as e:
-        error_msg = f"获取视频信息失败: {str(e)}"
-        logger.error(error_msg)
-        return error_msg
+        # 格式化进度信息
+        if isinstance(progress, dict):
+            progress_text = "\n".join([f"{k}: {v}" for k, v in progress.items()])
+        else:
+            progress_text = str(progress)
 
-def list_formats(url, cookies=None):
-    """列出可用格式"""
-    logger.info(f"获取视频格式列表: {url}")
-    try:
-        params = {"url": url}
-        if cookies:
-            params["cookies"] = cookies
-        response = requests.get(f"{API_BASE_URL}/formats", params=params, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        
-        formats = data.get("data", [])
-        format_list = []
-        for fmt in formats:
-            format_id = fmt.get("format_id", "未知")
-            ext = fmt.get("ext", "未知")
-            resolution = fmt.get("resolution", "未知")
-            format_note = fmt.get("format_note", "")
-            if format_note:
-                format_list.append(f"{format_id}: {resolution} ({ext}) - {format_note}")
-            else:
-                format_list.append(f"{format_id}: {resolution} ({ext})")
-        
-        result = "\n".join(format_list) if format_list else "未找到可用格式"
-        logger.info(f"获取到 {len(format_list)} 个格式")
-        return result
-    except requests.exceptions.ConnectionError as e:
-        error_msg = "连接错误: 无法连接到API服务，请检查服务是否运行"
-        logger.error(error_msg)
-        return error_msg
-    except requests.exceptions.Timeout as e:
-        error_msg = f"请求超时: {str(e)}"
-        logger.error(error_msg)
-        return error_msg
-    except Exception as e:
-        error_msg = f"获取格式列表失败: {str(e)}"
-        logger.error(error_msg)
-        return error_msg
+        status_text = f"""任务ID: {task_id}
+状态: {status}
+进度信息: {progress_text}"""
 
-def download_subtitles(url, languages, auto_select, subtitle_format, output_path="./downloads", cookies=None):
-    """提交字幕下载任务"""
-    logger.info(f"开始下载字幕: {url}, 语言: {languages}")
-    try:
-        # 准备请求数据
-        payload = {
-            "url": url,
-            "languages": languages,
-            "auto_select": auto_select,
-            "subtitle_format": subtitle_format,
-            "output_path": output_path
-        }
+        # 如果任务完成，显示下载链接
+        if status == "completed":
+            download_url = f"{API_BASE_URL}/download/{task_id}/file"
+            status_text += f"\n\n✅ 下载完成！\n下载链接: {download_url}"
+            return status_text, download_url
+        elif status == "failed":
+            error = result.get("error", "未知错误")
+            status_text += f"\n\n❌ 下载失败: {error}"
+            return status_text, None
+        else:
+            status_text += "\n\n⏳ 下载中，请稍后查询..."
+            return status_text, None
 
-        # 添加cookies参数（如果提供）
-        if cookies:
-            payload["cookies"] = cookies
-
-        # 发送POST请求到API
-        logger.info(f"发送字幕下载请求到: {API_BASE_URL}/download-subtitles")
-        response = requests.post(f"{API_BASE_URL}/download-subtitles", json=payload, timeout=30)
-        response.raise_for_status()
-
-        # 解析响应
-        result = response.json()
-        task_id = result.get("task_id")
-
-        if not task_id:
-            error_msg = "错误：无法获取任务ID"
-            logger.error(error_msg)
-            return error_msg, None
-
-        logger.info(f"字幕任务ID: {task_id}")
-
-        # 轮询任务状态直到完成
-        status_output = ""
-        max_attempts = 60  # 最多尝试60次（约2分钟）
-        attempt = 0
-
-        while attempt < max_attempts:
-            try:
-                status_response = requests.get(f"{API_BASE_URL}/task/{task_id}", timeout=10)
-                status_response.raise_for_status()
-                status_data = status_response.json()
-
-                task_status = status_data.get("data", {}).get("status", "unknown")
-                status_output += f"字幕任务状态: {task_status}\n"
-                logger.info(f"字幕任务 {task_id} 状态: {task_status}")
-
-                if task_status == "completed":
-                    result_data = status_data.get("data", {}).get("result", {})
-                    total_files = result_data.get("total_files", 0)
-                    downloaded_files = result_data.get("downloaded_files", [])
-
-                    if downloaded_files:
-                        file_list = "\n".join([f"- {f['language']}: {f['path']}" for f in downloaded_files])
-                        success_msg = status_output + f"字幕下载完成！\n下载文件数: {total_files}\n文件列表:\n{file_list}"
-                        logger.info(success_msg)
-                        return success_msg, downloaded_files
-                    else:
-                        error_msg = status_output + "字幕下载完成但没有文件"
-                        logger.warning(error_msg)
-                        return error_msg, None
-
-                elif task_status == "failed":
-                    error = status_data.get("data", {}).get("error", "未知错误")
-                    error_msg = status_output + f"字幕下载失败: {error}"
-                    logger.error(error_msg)
-                    return error_msg, None
-
-                # 等待一段时间后再次检查
-                time.sleep(2)
-                attempt += 1
-            except requests.exceptions.ConnectionError as e:
-                error_msg = f"连接错误: 无法连接到API服务，请检查服务是否运行"
-                logger.error(error_msg)
-                return error_msg, None
-            except requests.exceptions.Timeout as e:
-                error_msg = f"请求超时: {str(e)}"
-                logger.error(error_msg)
-                return error_msg, None
-            except Exception as e:
-                error_msg = f"错误: {str(e)}"
-                logger.error(error_msg)
-                return error_msg, None
-
-        timeout_msg = status_output + "字幕下载超时"
-        logger.warning(timeout_msg)
-        return timeout_msg, None
-
-    except requests.exceptions.ConnectionError as e:
-        error_msg = f"连接错误: 无法连接到API服务，请检查服务是否运行"
-        logger.error(error_msg)
-        return error_msg, None
-    except requests.exceptions.Timeout as e:
-        error_msg = f"请求超时: {str(e)}"
-        logger.error(error_msg)
-        return error_msg, None
     except requests.exceptions.HTTPError as e:
-        error_msg = f"HTTP错误: {e.response.status_code} - {e.response.text}"
-        logger.error(error_msg)
-        return error_msg, None
+        if e.response.status_code == 404:
+            return f"❌ 任务不存在: {task_id}", None
+        else:
+            return f"❌ 查询失败: {e.response.status_code}", None
     except Exception as e:
-        error_msg = f"错误: {str(e)}"
+        error_msg = f"❌ 查询任务状态失败: {str(e)}"
         logger.error(error_msg)
         return error_msg, None
 
-# Gradio界面
-with gr.Blocks(title="yt-dlp 视频下载器") as demo:
-    gr.Markdown("# yt-dlp 视频下载器")
-    gr.Markdown("使用此工具下载YouTube等平台的视频和字幕")
-    
-    # 添加健康检查函数
-    def health_check():
-        """检查API服务是否可用"""
-        try:
-            response = requests.get(f"{API_BASE_URL}/docs", timeout=5)
-            if response.status_code == 200:
-                return "服务状态: 正常运行"
-            else:
-                return f"服务状态: 异常 (状态码: {response.status_code})"
-        except Exception as e:
-            return f"服务状态: 无法连接 ({str(e)})"
-    
-    # 在界面顶部添加健康检查显示
-    health_status = gr.Textbox(label="服务状态", value=health_check())
+def get_video_info(url):
+    """获取视频信息"""
+    if not url:
+        return "❌ 请提供视频URL", None
 
-    # YouTube登录相关变量
-    current_session_id = None
-    
-    with gr.Tab("下载视频"):
-        with gr.Row():
-            url_input = gr.Textbox(label="视频URL", placeholder="请输入视频链接")
-        with gr.Row():
-            format_choice = gr.Dropdown(
-                choices=[
-                    "best[ext=mp4]",           # MP4格式最佳质量
-                    "best[height<=1080]",      # 1080p以下最佳质量
-                    "best[height<=720]",       # 720p以下最佳质量
-                    "best[height<=480]",       # 480p以下最佳质量
-                    "mp4",                     # 通用MP4格式
-                    "webm",                    # WebM格式
-                    "best",                    # 最佳可用格式(兜底)
-                    "worst"                    # 最低质量(用于测试)
-                ],
-                value="best[ext=mp4]",
-                label="下载格式"
-            )
-        with gr.Row():
-            cookies_input = gr.Textbox(
-                label="Cookies设置", 
-                placeholder="输入cookies文件路径(如: /path/to/cookies.txt) 或浏览器名称(如: chrome, firefox, edge, safari)",
-                value=""
-            )
-        with gr.Row():
-            output_path = gr.Textbox(label="输出路径", value="./downloads")
-        with gr.Row():
-            download_btn = gr.Button("开始下载")
-        with gr.Row():
-            status_output = gr.Textbox(label="下载状态", interactive=False, lines=10)
-        with gr.Row():
-            video_output = gr.Video(label="下载的视频")
-        
-        download_btn.click(
-            fn=download_video,
-            inputs=[url_input, format_choice, output_path, cookies_input],
-            outputs=[status_output, video_output]
-        )
-    
-    with gr.Tab("视频信息"):
-        with gr.Row():
-            info_url = gr.Textbox(label="视频URL", placeholder="请输入视频链接")
-        with gr.Row():
-            info_cookies = gr.Textbox(
-                label="Cookies设置", 
-                placeholder="输入cookies文件路径或浏览器名称",
-                value=""
-            )
-        with gr.Row():
-            info_btn = gr.Button("获取信息")
-        with gr.Row():
-            info_output = gr.Textbox(label="视频信息", interactive=False, lines=10)
-        
-        info_btn.click(
-            fn=get_video_info,
-            inputs=[info_url, info_cookies],
-            outputs=[info_output]
-        )
-    
-    with gr.Tab("格式列表"):
-        with gr.Row():
-            formats_url = gr.Textbox(label="视频URL", placeholder="请输入视频链接")
-        with gr.Row():
-            formats_cookies = gr.Textbox(
-                label="Cookies设置", 
-                placeholder="输入cookies文件路径或浏览器名称",
-                value=""
-            )
-        with gr.Row():
-            formats_btn = gr.Button("列出格式")
-        with gr.Row():
-            formats_output = gr.Textbox(label="可用格式", interactive=False, lines=15)
-        
-        formats_btn.click(
-            fn=list_formats,
-            inputs=[formats_url, formats_cookies],
-            outputs=[formats_output]
-        )
+    try:
+        logger.info(f"获取视频信息: {url}")
+        response = requests.get(f"{API_BASE_URL}/info?url={url}", timeout=30)
+        response.raise_for_status()
 
-    with gr.Tab("下载字幕"):
-        with gr.Row():
-            subtitle_url = gr.Textbox(label="视频URL", placeholder="请输入视频链接")
-        with gr.Row():
-            subtitle_languages = gr.CheckboxGroup(
-                choices=["en", "zh", "es", "fr", "de", "ja", "ko", "ru", "ar", "hi", "pt", "it", "nl", "pl", "sv", "da", "no", "fi"],
-                value=["en"],
-                label="选择字幕语言"
-            )
-        with gr.Row():
-            subtitle_format = gr.Dropdown(
-                choices=["srt", "vtt", "ass", "ssa"],
-                value="srt",
-                label="字幕格式"
-            )
-        with gr.Row():
-            auto_select = gr.Checkbox(
-                label="自动选择最佳字幕（如果指定语言不可用）",
-                value=True
-            )
-        with gr.Row():
-            subtitle_cookies = gr.Textbox(
-                label="Cookies设置",
-                placeholder="输入cookies文件路径或浏览器名称",
-                value=""
-            )
-        with gr.Row():
-            subtitle_output_path = gr.Textbox(label="输出路径", value="./downloads")
-        with gr.Row():
-            subtitle_download_btn = gr.Button("下载字幕")
-        with gr.Row():
-            subtitle_status = gr.Textbox(label="下载状态", interactive=False, lines=10)
+        result = response.json()
 
-        subtitle_download_btn.click(
-            fn=download_subtitles,
-            inputs=[subtitle_url, subtitle_languages, auto_select, subtitle_format, subtitle_output_path, subtitle_cookies],
-            outputs=[subtitle_status]
-        )
+        if result.get("success"):
+            info = result.get("info", {})
+            title = info.get("title", "未知标题")
+            duration = info.get("duration", "未知时长")
+            uploader = info.get("uploader", "未知上传者")
+            view_count = info.get("view_count", "未知播放量")
 
-    with gr.Tab("🔐 YouTube登录"):
-        gr.Markdown("### 🔐 YouTube浏览器登录获取Cookies")
-        gr.Markdown("通过系统启动的浏览器安全登录YouTube，自动提取cookies用于视频下载。")
+            info_text = f"""标题: {title}
+时长: {duration}秒
+上传者: {uploader}
+播放量: {view_count}"""
 
-        with gr.Row():
-            start_session_btn = gr.Button("🚀 启动浏览器登录", variant="primary", size="lg")
+            return info_text, info
+        else:
+            error_msg = result.get("error", "未知错误")
+            return f"❌ 获取视频信息失败: {error_msg}", None
 
-        with gr.Row():
-            login_status = gr.Textbox(
-                label="📊 登录状态",
-                interactive=False,
-                lines=8,
-                placeholder="等待启动浏览器会话..."
-            )
+    except Exception as e:
+        error_msg = f"❌ 获取视频信息失败: {str(e)}"
+        logger.error(error_msg)
+        return error_msg, None
 
-        # 隐藏的会话ID存储
-        session_id_hidden = gr.Textbox(visible=False, label="Session ID")
+def list_formats(url):
+    """列出可用格式"""
+    if not url:
+        return "❌ 请提供视频URL"
 
-        # 会话控制按钮区域（初始隐藏）
-        with gr.Row() as session_controls:
-            check_status_btn = gr.Button("🔄 刷新状态", variant="secondary")
-            extract_cookies_btn = gr.Button("🍪 提取Cookies", variant="primary")
-            cleanup_btn = gr.Button("🧹 清理会话", variant="stop")
+    try:
+        logger.info(f"获取视频格式列表: {url}")
+        response = requests.get(f"{API_BASE_URL}/formats?url={url}", timeout=30)
+        response.raise_for_status()
 
-        # 会话统计信息
-        with gr.Row():
-            cookie_result = gr.Textbox(
-                label="🎉 提取结果",
-                interactive=False,
-                lines=12,
-                placeholder="Cookies提取结果将显示在这里..."
-            )
+        result = response.json()
 
-        # 帮助信息
-        with gr.Accordion("📖 使用说明", open=False):
+        if result.get("success"):
+            formats = result.get("formats", [])
+            if not formats:
+                return "❌ 没有找到可用格式"
+
+            format_text = "可用格式:\n\n"
+            for fmt in formats[:20]:  # 只显示前20个格式
+                format_id = fmt.get("format_id", "未知")
+                ext = fmt.get("ext", "未知")
+                quality = fmt.get("format_note", "未知质量")
+                file_size = fmt.get("filesize", "未知大小")
+
+                format_text += f"ID: {format_id} | 扩展名: {ext} | 质量: {quality} | 大小: {file_size}\n"
+
+            if len(formats) > 20:
+                format_text += f"\n... 还有 {len(formats) - 20} 个格式"
+
+            return format_text
+        else:
+            error_msg = result.get("error", "未知错误")
+            return f"❌ 获取格式列表失败: {error_msg}"
+
+    except Exception as e:
+        error_msg = f"❌ 获取格式列表失败: {str(e)}"
+        logger.error(error_msg)
+        return error_msg
+
+def create_gradio_interface():
+    """创建Gradio界面"""
+    with gr.Blocks(title="yt-dlp 视频下载器") as demo:
+        gr.Markdown("# yt-dlp 视频下载器")
+        gr.Markdown("使用此工具下载YouTube等平台的视频和字幕")
+
+        # 添加健康检查函数
+        def health_check():
+            """检查API服务是否可用"""
+            try:
+                response = requests.get(f"{API_BASE_URL}/docs", timeout=5)
+                if response.status_code == 200:
+                    return "服务状态: 正常运行"
+                else:
+                    return f"服务状态: 异常 (状态码: {response.status_code})"
+            except Exception as e:
+                return f"服务状态: 无法连接 ({str(e)})"
+
+        # 在界面顶部添加健康检查显示
+        health_status = gr.Textbox(label="服务状态", value=health_check())
+
+        with gr.Tab("🔐 YouTube登录"):
             gr.Markdown("""
-            ### 🚀 使用步骤
+            ## YouTube浏览器登录
 
-            1. **启动浏览器**: 点击"启动浏览器登录"按钮
-            2. **访问链接**: 在提供的URL中完成YouTube登录
-            3. **检查状态**: 点击"刷新状态"查看登录进度
-            4. **提取Cookies**: 登录成功后点击"提取Cookies"
-            5. **开始下载**: 使用提取的cookies下载视频
+            使用真实浏览器完成YouTube登录，系统会自动提取cookies用于视频下载。
 
-            ### ⚠️ 注意事项
+            **优势:**
+            - ✅ 真实用户登录，避免机器人检测
+            - ✅ 支持会员内容下载
+            - ✅ 自动cookies管理和更新
+            - ✅ 安全隔离的浏览器环境
 
-            - 浏览器会话将在30分钟后自动过期
-            - 支持所有YouTube登录方式（包括2FA）
-            - Cookies将保存在本地，不会传输密码
-            - 每次只能有一个活跃会话
-
-            ### 🔧 故障排除
-
-            - **启动失败**: 检查Chrome浏览器是否安装
-            - **登录失败**: 确保网络连接正常
-            - **提取失败**: 确保已完成YouTube登录
+            **使用步骤:**
+            1. 点击"启动浏览器登录"
+            2. 访问显示的浏览器地址
+            3. 完成 YouTube 登录
+            4. 点击"检查登录状态"验证
+            5. 点击"提取Cookies"保存状态
             """)
 
-        # 绑定事件
-        session_controls.visible = False  # 初始隐藏
+            # 会话控制按钮
+            with gr.Row():
+                start_session_btn = gr.Button("🚀 启动浏览器登录", variant="primary")
+                check_status_btn = gr.Button("🔍 检查登录状态")
+                extract_cookies_btn = gr.Button("🍪 提取Cookies", variant="secondary")
+                cleanup_btn = gr.Button("🧹 清理会话", variant="stop")
 
-        start_session_btn.click(
-            fn=start_browser_session,
-            outputs=[login_status, session_controls, session_id_hidden]
+            # 状态显示
+            login_status = gr.Textbox(
+                label="登录状态",
+                lines=8,
+                max_lines=15,
+                interactive=False
+            )
+
+            # 会话控制区域（初始隐藏）
+            with gr.Group(visible=False) as session_controls:
+                gr.Markdown("### 会话控制")
+                cookie_result = gr.Textbox(
+                    label="操作结果",
+                    lines=6,
+                    max_lines=10,
+                    interactive=False
+                )
+
+            # 隐藏的会话ID存储
+            session_id_hidden = gr.State()
+
+            # 绑定事件
+            start_session_btn.click(
+                fn=start_browser_session,
+                outputs=[login_status, session_controls, session_id_hidden]
+            )
+
+            check_status_btn.click(
+                fn=check_session_status,
+                inputs=[session_id_hidden],
+                outputs=[login_status]
+            )
+
+            extract_cookies_btn.click(
+                fn=extract_browser_cookies,
+                inputs=[session_id_hidden],
+                outputs=[cookie_result]
+            )
+
+            cleanup_btn.click(
+                fn=cleanup_session,
+                inputs=[session_id_hidden],
+                outputs=[cookie_result]
+            )
+
+        with gr.Tab("📥 下载视频"):
+            with gr.Row():
+                url_input = gr.Textbox(label="视频URL", placeholder="请输入视频链接")
+            with gr.Row():
+                format_choice = gr.Dropdown(
+                    choices=["best", "worst", "bestvideo+bestaudio", "mp4", "webm"],
+                    label="选择格式",
+                    value="best"
+                )
+                output_path = gr.Textbox(label="输出路径", value="./downloads", placeholder="下载目录")
+            with gr.Row():
+                download_btn = gr.Button("开始下载", variant="primary")
+
+            download_result = gr.Textbox(label="下载结果", lines=3, interactive=False)
+            task_id_output = gr.Textbox(label="任务ID", interactive=False)
+
+        with gr.Tab("📊 任务状态"):
+            with gr.Row():
+                task_id_input = gr.Textbox(label="任务ID", placeholder="输入任务ID查询状态")
+                check_status_btn = gr.Button("查询状态")
+            with gr.Row():
+                status_output = gr.Textbox(label="任务状态", lines=8, interactive=False)
+                download_link = gr.Textbox(label="下载链接", interactive=False)
+
+        with gr.Tab("ℹ️ 视频信息"):
+            with gr.Row():
+                info_url_input = gr.Textbox(label="视频URL", placeholder="输入视频URL获取信息")
+                get_info_btn = gr.Button("获取信息")
+            with gr.Row():
+                info_output = gr.Textbox(label="视频信息", lines=6, interactive=False)
+
+        with gr.Tab("📋 格式列表"):
+            with gr.Row():
+                formats_url_input = gr.Textbox(label="视频URL", placeholder="输入视频URL获取格式列表")
+                list_formats_btn = gr.Button("获取格式")
+            with gr.Row():
+                formats_output = gr.Textbox(label="可用格式", lines=15, interactive=False)
+
+        # 绑定事件
+        download_btn.click(
+            fn=download_video,
+            inputs=[url_input, format_choice, output_path],
+            outputs=[download_result, task_id_output]
         )
 
         check_status_btn.click(
-            fn=check_session_status,
-            inputs=[session_id_hidden],
-            outputs=[login_status]
+            fn=check_task_status,
+            inputs=[task_id_input],
+            outputs=[status_output, download_link]
         )
 
-        extract_cookies_btn.click(
-            fn=extract_browser_cookies,
-            inputs=[session_id_hidden],
-            outputs=[cookie_result]
+        get_info_btn.click(
+            fn=get_video_info,
+            inputs=[info_url_input],
+            outputs=[info_output, gr.State()]
         )
 
-        cleanup_btn.click(
-            fn=cleanup_session,
-            inputs=[session_id_hidden],
-            outputs=[cookie_result]
+        list_formats_btn.click(
+            fn=list_formats,
+            inputs=[formats_url_input],
+            outputs=[formats_output]
         )
+
+    return demo
 
 if __name__ == "__main__":
     logger.info("启动Gradio应用...")
     logger.info(f"API基础URL: {API_BASE_URL}")
     logger.info(f"DOCKER_ENV环境变量: {os.getenv('DOCKER_ENV')}")
-    
+
     try:
+        # 创建界面
+        demo = create_gradio_interface()
+
+        # 启动应用
         demo.launch(
-            server_name="0.0.0.0", 
+            server_name="0.0.0.0",
             server_port=7860,
-            prevent_thread_lock=True  # 防止线程锁，允许应用正常运行
+            prevent_thread_lock=False  # 在supervisor中不需要prevent_thread_lock
         )
         logger.info("Gradio应用启动成功")
-        
-        # 保持应用运行
-        import time
-        while True:
-            time.sleep(1)
+
     except Exception as e:
         logger.error(f"Gradio应用启动失败: {str(e)}")
         raise
