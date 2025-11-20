@@ -13,9 +13,11 @@ services:
       - ./cookies:/app/cookies
     environment:
       - PYTHONUNBUFFERED=1
-      - API_BASE_URL=http://yt-dlp-api-service:8000
+      - API_BASE_URL=http://localhost:8000
       - DOCKER_ENV=true
       - PYTHONPATH=/app
+      - GRADIO_SERVER_NAME=0.0.0.0
+      - GRADIO_SERVER_PORT=7860
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/docs', timeout=5)"]

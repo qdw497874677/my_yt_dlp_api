@@ -10,7 +10,8 @@ WORKDIR /app
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
-        apt-utils && \
+        apt-utils \
+        supervisor && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -27,10 +28,13 @@ RUN mkdir -p /app/downloads /app/data /app/cookies
 # 复制应用代码
 COPY . .
 
+# 复制supervisor配置
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
 # 设置权限
 RUN chmod +x /app/start.sh
 
 EXPOSE 8000 7860
 
-# 启动FastAPI服务
-CMD ["python", "main.py"]
+# 使用supervisor启动FastAPI和Gradio服务
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
