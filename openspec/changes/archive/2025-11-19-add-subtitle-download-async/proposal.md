@@ -10,6 +10,6 @@
 - 添加字幕任务状态跟踪和历史记录
 
 ## Impact
-- **Affected specs**: `video-download` (扩展任务类型)
+- **Affected specs**: `ytdlp-service` (扩展任务类型支持)
 - **Affected code**: `main.py` (API端点), 数据库模型, 任务处理逻辑
 - **Breaking changes**: 无 - 保持现有字幕API兼容性

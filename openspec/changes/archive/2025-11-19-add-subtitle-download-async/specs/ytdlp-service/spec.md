@@ -46,10 +46,10 @@
 - **THEN** 系统自动转换为请求的格式
 - **AND** 保持时间轴和文本内容准确性
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: 任务类型支持
-任务系统 SHALL 支持多种任务类型，包括视频下载和字幕下载。
+系统 SHALL 支持多种任务类型，包括视频下载和字幕下载。
 
 #### Scenario: 任务类型区分
 - **WHEN** 创建新任务时
