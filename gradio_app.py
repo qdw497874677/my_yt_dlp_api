@@ -345,6 +345,53 @@ def list_formats(url):
         logger.error(error_msg)
         return error_msg
 
+def download_subtitles(url, languages, auto_select, subtitle_format, output_path="./downloads"):
+    """提交字幕下载任务"""
+    if not url:
+        return "❌ 请提供视频URL", None
+
+    try:
+        logger.info(f"开始下载字幕: {url}, 语言: {languages}")
+
+        # 准备请求数据
+        payload = {
+            "url": url,
+            "languages": languages,
+            "auto_select": auto_select,
+            "subtitle_format": subtitle_format,
+            "output_path": output_path
+        }
+
+        # 发送POST请求到API
+        # POST /download-subtitles - 字幕下载端点，自动使用cookies认证
+        logger.info(f"发送字幕下载请求到: {API_BASE_URL}/download-subtitles")
+        response = requests.post(f"{API_BASE_URL}/download-subtitles", json=payload, timeout=30)
+        response.raise_for_status()
+
+        result = response.json()
+        task_id = result.get("task_id")
+
+        if task_id:
+            logger.info(f"字幕下载任务已提交，任务ID: {task_id}")
+            return f"✅ 字幕下载任务已提交！\n任务ID: {task_id}\n请使用任务ID查询下载进度。", task_id
+        else:
+            error_msg = result.get("error", "未知错误")
+            logger.error(f"字幕下载请求失败: {error_msg}")
+            return f"❌ 字幕下载请求失败: {error_msg}", None
+
+    except requests.exceptions.Timeout:
+        error_msg = "❌ 请求超时，请检查网络连接或API服务状态"
+        logger.error(error_msg)
+        return error_msg, None
+    except requests.exceptions.ConnectionError:
+        error_msg = "❌ 无法连接到API服务，请确保后端服务正在运行"
+        logger.error(error_msg)
+        return error_msg, None
+    except Exception as e:
+        error_msg = f"❌ 字幕下载请求失败: {str(e)}"
+        logger.error(error_msg)
+        return error_msg, None
+
 def create_gradio_interface():
     """创建Gradio界面"""
     with gr.Blocks(title="yt-dlp 视频下载器") as demo:
@@ -499,6 +546,54 @@ def create_gradio_interface():
             fn=list_formats,
             inputs=[formats_url_input],
             outputs=[formats_output]
+        )
+
+        with gr.Tab("📝 下载字幕"):
+            gr.Markdown("""
+            ## 字幕下载功能
+
+            下载视频的字幕文件，支持多种语言和格式。系统会自动使用最佳可用的cookies进行认证。
+
+            **功能特点:**
+            - ✅ 支持多种语言字幕下载
+            - ✅ 自动选择最佳字幕质量
+            - ✅ 支持SRT、VTT、ASS等格式
+            - ✅ 自动使用cookies认证
+            - ✅ 异步下载，状态实时跟踪
+            """)
+
+            with gr.Row():
+                subtitle_url_input = gr.Textbox(label="视频URL", placeholder="输入视频链接")
+            with gr.Row():
+                subtitle_languages = gr.CheckboxGroup(
+                    choices=["en", "zh", "es", "fr", "de", "ja", "ko", "ru", "ar", "hi", "pt", "it", "nl", "pl", "sv", "da", "no", "fi"],
+                    value=["en"],
+                    label="选择字幕语言"
+                )
+            with gr.Row():
+                subtitle_format = gr.Dropdown(
+                    choices=["srt", "vtt", "ass", "ssa"],
+                    value="srt",
+                    label="字幕格式"
+                )
+                auto_select = gr.Checkbox(
+                    label="自动选择最佳字幕（如果指定语言不可用）",
+                    value=True
+                )
+            with gr.Row():
+                subtitle_output_path = gr.Textbox(label="输出路径", value="./downloads")
+            with gr.Row():
+                subtitle_download_btn = gr.Button("📝 下载字幕", variant="primary")
+            with gr.Row():
+                subtitle_status = gr.Textbox(label="下载状态", lines=8, interactive=False)
+            with gr.Row():
+                subtitle_task_id = gr.Textbox(label="任务ID", interactive=False)
+
+        # 绑定字幕下载事件
+        subtitle_download_btn.click(
+            fn=download_subtitles,
+            inputs=[subtitle_url_input, subtitle_languages, auto_select, subtitle_format, subtitle_output_path],
+            outputs=[subtitle_status, subtitle_task_id]
         )
 
     return demo
