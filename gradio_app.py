@@ -7,6 +7,7 @@ yt-dlp API - Gradio界面应用
 import gradio as gr
 import requests
 import os
+import time
 import json
 import uuid
 from datetime import datetime
@@ -16,46 +17,67 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# 设置环境变量以避免Gradio的兼容性问题
+os.environ.setdefault('GRADIO_ANALYTICS_ENABLED', 'False')
+os.environ.setdefault('GRADIO_SHARE_ENABLED', 'False')
+os.environ.setdefault('GRADIO_SERVER_NAME', '0.0.0.0')
+
 # API基础URL - 自动检测是否在Docker环境中
 API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:8000')
 
 def start_browser_session():
-    """启动浏览器登录会话"""
+    """自动设置Cookie (替代浏览器登录会话)"""
     try:
-        logger.info("启动YouTube浏览器登录会话...")
-        response = requests.post(f"{API_BASE_URL}/browser/session/start", timeout=30)
+        logger.info("自动检测和设置YouTube cookies...")
+        response = requests.post(f"{API_BASE_URL}/cookies/auto-setup", timeout=30)
         response.raise_for_status()
         result = response.json()
 
         if result.get("success"):
-            session_id = result.get("session_id")
-            debug_port = result.get("debug_port")
-            debug_url = result.get("debug_url")
+            # 提取有用信息
+            scan_result = result.get("scan_result", {})
+            browser_details = scan_result.get("scan_summary", {}).get("browser_details", [])
+            active_cookie = result.get("active_cookie", "")
 
-            message = f"""✅ 浏览器会话已启动
+            # 构建响应消息
+            message = """✅ Cookie自动设置成功！
 
-📋 会话信息:
-- 会话ID: {session_id}
-- 调试端口: {debug_port}
-- 访问地址: {debug_url}
-
-📝 使用说明:
-1. 点击上面的访问地址或直接访问 {debug_url}
-2. 在打开的浏览器中访问 youtube.com 并完成登录
-3. 登录成功后，点击"检查登录状态"验证
-4. 最后点击"提取Cookies"保存登录状态
-
-⏰ 会话将在30分钟后自动超时
+🍪 已检测到以下浏览器:
 """
-            logger.info(f"浏览器会话启动成功: {session_id}")
-            return message, gr.update(visible=True), session_id
+            for browser in browser_details:
+                browser_name = browser.get("browser", "未知")
+                cookie_count = browser.get("cookie_count", 0)
+                cookie_file = browser.get("cookie_file", "")
+                message += f"- {browser_name.title()}: {cookie_count} 个cookies\n"
+
+            if active_cookie:
+                message += f"""
+📁 Cookie文件: {active_cookie}
+🎯 验证状态: ✅ 可正常下载YouTube视频
+📊 有效性评分: {scan_result.get('best_score', 'N/A')}
+
+💡 提示: 现在可以直接使用下载功能，无需手动登录！
+"""
+
+            logger.info("Cookie自动设置成功")
+            return message, gr.update(visible=True), "auto_setup_success"
         else:
+            recommendations = result.get("recommendations", [])
             error_msg = result.get("error", "未知错误")
-            logger.error(f"启动浏览器会话失败: {error_msg}")
-            return f"❌ 启动失败: {error_msg}", gr.update(visible=False), None
+            message = f"""❌ Cookie自动设置失败
+
+错误信息: {error_msg}
+
+建议操作:
+"""
+            for rec in recommendations:
+                message += f"- {rec}\n"
+
+            logger.error(f"Cookie自动设置失败: {error_msg}")
+            return message, gr.update(visible=False), None
 
     except requests.exceptions.Timeout:
-        error_msg = "❌ 启动超时，请稍后重试"
+        error_msg = "❌ 操作超时，请稍后重试"
         logger.error(error_msg)
         return error_msg, gr.update(visible=False), None
     except requests.exceptions.ConnectionError:
@@ -63,38 +85,40 @@ def start_browser_session():
         logger.error(error_msg)
         return error_msg, gr.update(visible=False), None
     except Exception as e:
-        error_msg = f"❌ 启动失败: {str(e)}"
+        error_msg = f"❌ 操作失败: {str(e)}"
         logger.error(error_msg)
         return error_msg, gr.update(visible=False), None
 
 def check_session_status(session_id):
-    """检查浏览器会话状态"""
+    """检查Cookie状态"""
     if not session_id:
-        return "❌ 没有活跃的浏览器会话"
+        return "❌ 请先启动Cookie自动设置"
 
     try:
-        logger.info(f"检查会话状态: {session_id}")
-        response = requests.get(f"{API_BASE_URL}/browser/session/{session_id}/status", timeout=10)
+        logger.info("检查Cookie状态...")
+        response = requests.get(f"{API_BASE_URL}/cookies/status", timeout=10)
         response.raise_for_status()
         result = response.json()
 
         if result.get("success"):
-            session_data = result.get("session", {})
-            status = session_data.get("status", "未知")
-            youtube_logged_in = session_data.get("youtube_logged_in", False)
-            created_at = session_data.get("created_at", "")
-            last_activity = session_data.get("last_activity", "")
+            cookie_info = result.get("cookie_info", {})
+            status = cookie_info.get("status", "未知")
+            file_path = cookie_info.get("file_path", "")
+            file_size = cookie_info.get("file_size", 0)
+            domains = cookie_info.get("domains", [])
+            expiry = cookie_info.get("estimated_expiry", "")
 
-            status_text = f"""📊 会话状态: {status}
-🔐 YouTube登录: {'✅ 已登录' if youtube_logged_in else '❌ 未登录'}
-🕐 创建时间: {created_at}
-🔄 最后活动: {last_activity}"""
+            status_text = f"""🍪 Cookie状态: {status}
+📁 Cookie文件: {file_path}
+📊 文件大小: {file_size} bytes
+🌐 支持域名: {', '.join(domains)}
+🕐 有效期至: {expiry}"""
 
-            if youtube_logged_in:
-                status_text += "\n\n🎉 检测到YouTube登录状态！现在可以提取Cookies了。"
+            if status == "valid":
+                status_text += "\n\n🎉 Cookie状态正常！可以正常下载YouTube视频。"
                 return status_text
             else:
-                status_text += "\n\n⚠️ 尚未检测到YouTube登录，请确保已在浏览器中完成YouTube登录。"
+                status_text += "\n\n⚠️ Cookie可能已过期或无效，建议重新设置。"
                 return status_text
         else:
             error_msg = result.get("error", "未知错误")
@@ -106,64 +130,65 @@ def check_session_status(session_id):
         return error_msg
 
 def extract_browser_cookies(session_id):
-    """提取浏览器Cookies"""
+    """刷新Cookies (替代浏览器Cookies提取)"""
     if not session_id:
-        return "❌ 没有活跃的浏览器会话"
+        return "❌ 请先启动Cookie自动设置"
 
     try:
-        logger.info(f"提取会话 {session_id} 的cookies...")
-        response = requests.post(f"{API_BASE_URL}/browser/session/{session_id}/extract-cookies", timeout=30)
+        logger.info("刷新Cookies...")
+        response = requests.post(f"{API_BASE_URL}/cookies/refresh", timeout=30)
         response.raise_for_status()
         result = response.json()
 
         if result.get("success"):
-            cookie_count = result.get("cookie_count", 0)
-            net_cookies = result.get("netscape_cookies", "")
+            scan_result = result.get("scan_result", {})
+            best_cookie = result.get("active_cookie", "")
+            validation = scan_result.get("validation_results", {}).get("edge", {}) if scan_result.get("validation_results") else {}
 
-            # 保存cookies到文件
-            cookie_filename = f"youtube_cookies_{session_id[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            cookie_path = os.path.join("./cookies", cookie_filename)
+            message = f"""✅ Cookies刷新成功！
 
-            # 确保cookies目录存在
-            os.makedirs("./cookies", exist_ok=True)
+📋 刷新信息:
+- Cookie文件: {best_cookie}
+- 验证状态: {'✅ 有效' if validation.get('valid') else '❌ 无效'}
+- 视频标题: {validation.get('video_title', '未知') if validation.get('valid') else '无法获取'}
+- 可下载: {'是' if validation.get('can_download') else '否'}
 
-            with open(cookie_path, 'w') as f:
-                f.write(net_cookies)
-
-            message = f"""✅ Cookies提取成功！
-
-📋 提取信息:
-- Cookie数量: {cookie_count}
-- 保存文件: {cookie_filename}
-- 文件路径: {cookie_path}
-
-🎉 系统将自动使用这些cookies进行视频下载
+🎉 Cookies已更新，现在可以正常下载YouTube视频！
 """
-            logger.info(f"成功提取 {cookie_count} 个cookies到 {cookie_path}")
+            logger.info("Cookies刷新成功")
             return message
         else:
             error_msg = result.get("error", "未知错误")
-            logger.error(f"提取cookies失败: {error_msg}")
-            return f"❌ 提取失败: {error_msg}"
+            logger.error(f"刷新cookies失败: {error_msg}")
+            return f"❌ 刷新失败: {error_msg}"
 
     except Exception as e:
-        error_msg = f"❌ 提取失败: {str(e)}"
+        error_msg = f"❌ 刷新失败: {str(e)}"
         logger.error(error_msg)
         return error_msg
 
 def cleanup_session(session_id):
-    """清理会话"""
-    if not session_id:
-        return "✅ 没有需要清理的会话"
-
+    """清理过期Cookies"""
     try:
-        logger.info(f"清理会话 {session_id}...")
-        response = requests.delete(f"{API_BASE_URL}/browser/session/{session_id}", timeout=10)
+        logger.info("清理过期Cookies...")
+        response = requests.delete(f"{API_BASE_URL}/cookies/cleanup", timeout=10)
         response.raise_for_status()
         result = response.json()
 
         if result.get("success"):
-            message = "✅ 会话已清理，浏览器窗口已关闭"
+            cleanup_info = result.get("cleanup_info", {})
+            deleted_count = cleanup_info.get("deleted_files", 0)
+            total_size = cleanup_info.get("total_size_freed", 0)
+
+            message = f"""✅ Cookie清理完成！
+
+📋 清理信息:
+- 删除文件数: {deleted_count}
+- 释放空间: {total_size} bytes
+- 剩余有效Cookies: {cleanup_info.get('remaining_files', 0)}
+
+💡 系统已自动保留最新有效的Cookie文件
+"""
             logger.info(message)
             return message
         else:
@@ -171,8 +196,8 @@ def cleanup_session(session_id):
             return f"⚠️ 清理部分失败: {error_msg}"
 
     except Exception as e:
-        logger.warning(f"清理会话时出错: {e}")
-        return "✅ 会话引用已清理（可能有部分资源未完全释放）"
+        logger.warning(f"清理Cookies时出错: {e}")
+        return "✅ Cookie清理完成（可能需要手动检查）"
 
 # Alias functions to match validation expectations
 def get_browser_session_status(session_id):
@@ -1621,10 +1646,10 @@ def create_gradio_interface():
             outputs=[status_output, download_link]
         )
 
-        get_info_btn.click(
-            fn=get_video_info,
-            inputs=[info_url_input],
-            outputs=[info_output, gr.State()]
+        get_comprehensive_info_btn.click(
+            fn=get_comprehensive_video_info,
+            inputs=[enhanced_info_url],
+            outputs=[comprehensive_info]
         )
 
         list_formats_btn.click(
@@ -1959,9 +1984,9 @@ def create_gradio_interface():
             fn=stop_scheduler,
             outputs=[scheduler_status]
         )
-        update_schedule_btn.click(
-            fn=update_scheduler_schedule,
-            inputs=[schedule_hours, schedule_days],
+        save_config_btn.click(
+            fn=update_scheduler_config,
+            inputs=[check_interval, auto_update, update_time, scheduler_enabled],
             outputs=[scheduler_status]
         )
 
@@ -1974,19 +1999,11 @@ def create_gradio_interface():
             fn=delete_selected_tasks,
             outputs=[operation_result]
         )
-        clear_completed_btn.click(
-            fn=clear_completed_tasks,
-            outputs=[operation_result]
-        )
-        refresh_btn.click(
-            fn=refresh_task_list,
-            outputs=[task_dataframe]
-        )
-
+        
         # 绑定Cookie管理中心事件
-        refresh_cookie_btn.click(
-            fn=get_cookies_status,
-            outputs=[cookie_status]
+        refresh_cookie_list_btn.click(
+            fn=get_cookies_list,
+            outputs=[cookie_dataframe]
         )
         auto_setup_btn.click(
             fn=auto_setup_cookies,
@@ -2037,7 +2054,11 @@ if __name__ == "__main__":
             server_port=7860,
             prevent_thread_lock=True,  # 在supervisor中需要prevent_thread_lock保持主线程运行
             show_error=True,
-            quiet=False
+            quiet=False,
+            # 基本配置以避免兼容性问题
+            share=False,  # 禁用分享功能
+            inbrowser=False,  # 不自动打开浏览器
+            show_api=False  # 隐藏API文档界面
         )
         logger.info("Gradio应用启动成功")
 

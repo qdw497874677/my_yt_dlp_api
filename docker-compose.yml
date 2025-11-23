@@ -16,8 +16,9 @@ services:
       - API_BASE_URL=http://localhost:8000
       - DOCKER_ENV=true
       - PYTHONPATH=/app
+      - GRADIO_ANALYTICS_ENABLED=false
+      - GRADIO_SHARE_ENABLED=false
       - GRADIO_SERVER_NAME=0.0.0.0
-      - GRADIO_SERVER_PORT=7860
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/docs', timeout=5)"]
