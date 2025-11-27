@@ -514,13 +514,41 @@ def download_video(url: str, output_path: str = "./downloads", format: str = "be
         'no_abort_on_error': True,
         # 添加进度钩子来处理文件名
         'progress_hooks': [progress_hook],
+        # 反机器人检测配置
+        'extractor_args': {
+            'youtube': {
+                'player_client': 'default',  # 使用默认客户端避免iOS客户端问题
+            }
+        },
+        # 设置用户代理
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+        },
+        # 增加超时和重试
+        'socket_timeout': 30,
+        'retries': 3,
+        'fragment_retries': 3,
     }
-    
+
     # 如果需要更安全的处理，我们可以在下载前先获取信息
     temp_ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
+        # 反机器人检测配置
+        'extractor_args': {
+            'youtube': {
+                'player_client': 'default',  # 使用默认客户端避免iOS客户端问题
+            }
+        },
+        # 设置用户代理
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+        },
+        # 增加超时和重试
+        'socket_timeout': 30,
+        'retries': 3,
+        'fragment_retries': 3,
     }
     
     # 添加cookie支持到temp_ydl_opts
@@ -570,12 +598,12 @@ def download_video(url: str, output_path: str = "./downloads", format: str = "be
 def get_video_info(url: str, quiet: bool = False, cookies: str = None) -> Dict[str, Any]:
     """
     Get information about a video without downloading it.
-    
+
     Args:
         url (str): The URL of the video
         quiet (bool): If True, suppress output
         cookies (str): Path to cookies file or browser name for cookies
-        
+
     Returns:
         Dict[str, Any]: Information about the video
     """
@@ -583,8 +611,22 @@ def get_video_info(url: str, quiet: bool = False, cookies: str = None) -> Dict[s
         'quiet': quiet,
         'no_warnings': quiet,
         'skip_download': True,
+        # 反机器人检测配置
+        'extractor_args': {
+            'youtube': {
+                'player_client': 'default',  # 使用默认客户端避免iOS客户端问题
+            }
+        },
+        # 设置用户代理
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+        },
+        # 增加超时和重试
+        'socket_timeout': 30,
+        'retries': 3,
+        'fragment_retries': 3,
     }
-    
+
     # 添加cookie支持
     if cookies:
         if cookies.endswith('.txt'):
@@ -593,7 +635,7 @@ def get_video_info(url: str, quiet: bool = False, cookies: str = None) -> Dict[s
         else:
             # 如果是浏览器名称
             ydl_opts['cookiesfrombrowser'] = (cookies,)
-    
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
         return ydl.sanitize_info(info)
